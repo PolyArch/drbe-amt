@@ -13,7 +13,7 @@ public:
   float _sram_Mb_per_mm2=8.1f;
   int _chiplet_io_bits_per_mm2=200;
   int _macc_per_complex_op=4;
-  float _router_constant=0.000001; // area of a 1-bit, 1input, 1output router in mm^2
+  float _router_constant=1.2244e-7; // area of a 1-bit, 1input, 1output router in mm^2
 };
 
 class hw_unit {
