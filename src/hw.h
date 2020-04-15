@@ -94,6 +94,8 @@ public:
     float area_per_cluster = path_conv_area() / _num_clusters;
     int num_clusters = area_for_path_conv / area_per_cluster;
 
+    //printf("area per 1 cluster: %f\n",area_per_cluster);
+
     _num_clusters = num_clusters;
 
     assert(_num_clusters >= 0);
