@@ -66,7 +66,7 @@ class path_proc_unit : public hw_unit {
 public:
   path_proc_unit(tech_params* t) : hw_unit(t), 
      _coef_router(t), _input_router(t), _output_router(t),
-     _input_tap_fifo(t,this), _coef_storage(t,this)   {
+      _coef_storage(t,this), _input_tap_fifo(t,this)   {
     _input_router._in_degree=8;
     _input_router._out_degree=8; // don't really think we need much on input router
     _coef_router._in_degree=8;
@@ -76,15 +76,17 @@ public:
   }  
  
   path_proc_unit(const path_proc_unit &from) : hw_unit(from._t), 
-    _coef_router(from._coef_router), _input_tap_fifo(from._input_tap_fifo),
-    _input_router(from._input_router), _output_router(from._output_router),
-    _coef_storage(from._coef_storage) {
+    _coef_router(from._coef_router), _input_router(from._input_router), 
+    _output_router(from._output_router),
+    _coef_storage(from._coef_storage),
+     _input_tap_fifo(from._input_tap_fifo) {
     _input_tap_fifo.ppu=this;
     _coef_storage.ppu=this;
     printf("hi!\n");
   } 
 
   void set_params_by_mem_ratio(float mem_ratio, float total_area) {
+    _mem_ratio = mem_ratio;
     _num_clusters=100;
     for(int i = 0; i < 4; ++i) {
       set_params_by_mem_ratio_once(mem_ratio,total_area);
@@ -188,6 +190,7 @@ public:
   int _input_buffer_length=3300100;
   int _input_bitwidth=32;
   int _coef_bitwidth=32;
+  float _mem_ratio=-1;
 };
 
 class drbe_wafer : public hw_unit {
@@ -211,8 +214,23 @@ public:
   int half_depth() {
     return ceil(depth()/2);
   }
+  int num_units() {
+    if(_num_units==0) {
+      _num_units = area()/_chiplet_area;
+    }
+    return _num_units;
+  }
+  void reset_computed() {
+    _num_units=0;
+  }
+  void set_chiplet_area(float area) {
+    _chiplet_area=area;
+    reset_computed();
+  }
 
+  float chiplet_area() {return _chiplet_area;}
 
+private:
   int _wafer_diameter=0; //mm^2
   float _chiplet_area=0;
   int _num_units=0;
