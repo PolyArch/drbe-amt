@@ -314,6 +314,8 @@ int main(int argc, char* argv[]) {
 
 
 
+  
+  printf("\n  --- DSE Summary --- \n");
 
   for(int ppu_area = 20; ppu_area < 21; ppu_area+=5) {
   //int ppu_area=20;
@@ -341,6 +343,7 @@ int main(int argc, char* argv[]) {
     ppu_stats stats;
     evaluate_ppu(best_ppu,scene_vec,w,stats);
 
+    
     printf("%dmm^2 PPU (%0.2f), in-MB: %0.2f, clust: %d, coef_per_clust %d, "\
            "Agg nets: %d, Mem Ratio: %d, Coef per mm2: %0.2f, "\
            "avg_wafers: %0.2f, avg_ppus_per_link: %0.2f, fails: %d\n",
