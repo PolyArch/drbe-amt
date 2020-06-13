@@ -149,6 +149,13 @@ struct ppu_stats {
   float avg_ppus_per_link=0;
   int wafer_histo[100000];
   int coef_per_mm2[100000]; 
+
+  void print_wafer_histo() {
+    for(int i = 1; i < 400; ++i) {
+      printf("%d ",wafer_histo[i]);
+    }
+  }
+
 };
 
 void evaluate_ppu(path_proc_unit* ppu, std::vector<band>& scene_vec, drbe_wafer& w, 
@@ -308,7 +315,7 @@ int main(int argc, char* argv[]) {
 
 
 
-  for(int ppu_area = 5; ppu_area < 200; ppu_area+=5) {
+  for(int ppu_area = 20; ppu_area < 21; ppu_area+=5) {
   //int ppu_area=20;
 
   //for(float fast_update_period = 1000; fast_update_period < 1000000; 
@@ -347,6 +354,9 @@ int main(int argc, char* argv[]) {
         stats.avg_wafers,
         stats.avg_ppus_per_link,
         stats.total_failures);
+    printf("Wafers Needed Histogram: ");
+    stats.print_wafer_histo();
+    printf("\n");
     //best_ppu->print_params();
     //best_ppu->print_area_breakdown();
   }
