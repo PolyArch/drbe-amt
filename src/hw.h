@@ -14,6 +14,7 @@ public:
   int _chiplet_io_bits_per_mm2=200;
   int _macc_per_complex_op=4;
   float _router_constant=1.2244e-7; // area of a 1-bit, 1input, 1output router in mm^2
+  float _flops_per_mm2_per_cycle = 9.8 * 2 / 1.25 / 0.68; // Ara 1.25 GHz, 9.8 DP-GFLOPS, Area = 0.68 mm2
 };
 
 class hw_unit {

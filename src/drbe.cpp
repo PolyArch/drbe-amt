@@ -13,11 +13,9 @@ using namespace std;
 //};
 
 
-
 float Band::normalized_distance_to(Band &other) {
   auto& my_vec = normalized_vec();
   auto& other_vec = other.normalized_vec();
-
   float dist = 0;
   for(unsigned i = 0; i < my_vec.size(); ++i) {
     float absdiff = abs(my_vec[i] - other_vec[i]);
@@ -83,6 +81,7 @@ bool Band::increase_difficulty() {
   }
 
 
+
 std::vector<float>& Band::normalized_vec() {
   if(_norm_features.size()==0) {
     _norm_features.push_back(platforms() / (float)ScenarioGen::max_platforms);
@@ -113,11 +112,25 @@ struct PPUStats {
 
   float avg_ppus_per_link=0;
   int wafer_histo[100000];
+  int wafer_histo_no_ge[100000];
+  int ge_core_histo[100000];
   int coef_per_mm2[100000]; 
+  float avg_ge_area=0.0;
 
   void print_wafer_histo() {
     for(int i = 1; i < 400; ++i) {
       printf("%d ",wafer_histo[i]);
+    }
+  }
+
+  void print_ge_histo() {
+    for(int i = 1; i < 400; ++i) {
+      printf("%d ",ge_core_histo[i]);
+    }
+  }
+  void print_wafer_no_ge_histo() {
+    for(int i = 1; i < 400; ++i) {
+      printf("%d ",wafer_histo_no_ge[i]);
     }
   }
 };
@@ -236,35 +249,74 @@ void evaluate_ppu(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer&
   stats.total_failures=0;
 
   float total_coef_per_ppu=0;
-  float wafers=0, total_ppus_per_link=0;
+  float wafers=0, total_ppus_per_link=0, total_ge_area=0;;
   int total_in_target_wafer=0;
 
-  for(auto& band : scene_vec) {
+
+  for(auto& b : scene_vec) {
     float ppus_per_link=0;
-    int coef_per_ppu = band.coef_per_ppu(*ppu,w,ppus_per_link,verbose);
+    int coef_per_ppu = b.coef_per_ppu(*ppu,w,ppus_per_link,verbose);
+
     if(coef_per_ppu==0) stats.total_failures+=1;
     total_ppus_per_link += ppus_per_link;
 
     total_coef_per_ppu += coef_per_ppu;
 
-    float ppus = band.num_links() * ppus_per_link;
-    float num_wafers = ppus / w.num_units();
+    // Considering Geometry Engine
+    // Relative Location Calculation
+    int fast_relative_loc_flop = 3 * (b._n_tx * b._n_fast + b._n_fast * b._n_rx + b._n_tx * b._n_rx);
+    int slow_relative_loc_flop = 3 * (b._n_tx * b._n_slow + b._n_slow * b._n_rx + b._n_tx * b._n_rx);
+    // Affine Transformation
+    int affine_transform_flop = 25 * b._n_obj;
+    // Relative Motion
+    int fast_relative_mot_flop = 3 * (b._n_tx * b._n_fast + b._n_fast * b._n_rx + b._n_tx * b._n_rx);
+    int slow_relative_mot_flop = 3 * (b._n_tx * b._n_slow + b._n_slow * b._n_rx + b._n_tx * b._n_rx);
+    // Path Gain/Loss
+    int path_gain_flop = rand_rng(20, 2581) * b.num_links();
+    // Path Delay
+    int path_delay_flop = 20 * (b._n_tx * b._n_obj + b._n_obj * b._n_rx + b._n_tx * b._n_rx);
+
+    // Calculate the Geometry Engine Computation Unit Area
+    float frac_slow  = (float)(b._n_slow)/((float)b._n_obj);
+    float frac_fast  = (float)(b._n_fast)/((float)b._n_obj);
+    float ge_comp_core_area = 0.0;
+    ge_comp_core_area += ((float)fast_relative_loc_flop/(float) b._high_update_period
+                          + (float)slow_relative_loc_flop/(float) b._low_update_period) / ppu->_t->_flops_per_mm2_per_cycle;
+    ge_comp_core_area += (float)affine_transform_flop * ((float)frac_slow / (float)b._low_update_period 
+                          + (float)frac_fast / (float)b._high_update_period) / ppu->_t->_flops_per_mm2_per_cycle;
+    ge_comp_core_area += ((float)fast_relative_mot_flop/(float)b._high_update_period 
+                          + (float)slow_relative_mot_flop/(float)b._low_update_period) / ppu->_t->_flops_per_mm2_per_cycle;
+    ge_comp_core_area += (float)path_gain_flop * ((float)frac_slow / (float)b._low_update_period 
+                          + (float)frac_fast / (float)b._high_update_period) / ppu->_t->_flops_per_mm2_per_cycle;
+    ge_comp_core_area += (float)path_delay_flop * ((float)frac_slow / (float)b._low_update_period 
+                          + (float)frac_fast / (float)b._high_update_period) / ppu->_t->_flops_per_mm2_per_cycle;
+    //ge_comp_core_area = 0;// without consider GE
+    total_ge_area += ge_comp_core_area;
+
+    float ppus = b.num_links() * ppus_per_link;
+    float num_wafers = ppus / w.num_units() + ge_comp_core_area / w.area();
+    int num_wafers_no_ge = ceil(ppus / w.num_units());
     int int_num_wafers = ceil(num_wafers);
     if(int_num_wafers<=num_wafers_target) total_in_target_wafer++;
+    int num_ge_core = ceil(ge_comp_core_area / 0.68);
+
     wafers += int_num_wafers;
     assert(int_num_wafers<100000);
     stats.wafer_histo[int_num_wafers]++;
+    stats.wafer_histo_no_ge[num_wafers_no_ge]++;
+    stats.ge_core_histo[num_ge_core]++;
     int int_avg_coef_per_mm2 = stats.avg_coef_per_ppu / w.chiplet_area();
     assert(int_avg_coef_per_mm2 < 100000);
     stats.coef_per_mm2[int_num_wafers]++;
-    //printf("Avg wafer: %d, PPUs: %f, band.num_links():%d, ppus_per_link:%f\n",
-    //    int_num_wafers, ppus, band.num_links(), ppus_per_link);
+    //printf("Avg wafer: %d, PPUs: %f, b.num_links():%d, ppus_per_link:%f\n",
+    //    int_num_wafers, ppus, b.num_links(), ppus_per_link);
   }
   stats.percent_in_target_wafer = total_in_target_wafer / (float) scene_vec.size();
   stats.avg_ppus_per_link = total_ppus_per_link / scene_vec.size();
   stats.avg_wafers = wafers / scene_vec.size();
   stats.avg_coef_per_ppu = total_coef_per_ppu / scene_vec.size();
   stats.avg_coef_per_mm2 = stats.avg_coef_per_ppu / w.chiplet_area();
+  stats.avg_ge_area = total_ge_area / scene_vec.size();
 }
 
 path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafer& w) {
@@ -281,6 +333,7 @@ path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafe
     int total_ins_per_side = ceil(bits_per_side/32.0); //divide by 32 bit width
     int remain=total_ins_per_side - (2*2 + agg_network*2);
     if(remain < 2) break;
+
 
     // Loop over coefficients per cluster
     for(int cpc = 10; cpc < 40; cpc+=5) {
@@ -364,8 +417,8 @@ int main(int argc, char* argv[]) {
   //for(fast_update_period = 1000; fast_update_period < 1000000; 
   //    fast_update_period*=1.2589254117941672104239541063958) {
 
-     //for(auto& band : scene_vec) {
-     //  band._high_update_period=fast_update_period;
+     //for(auto& b : scene_vec) {
+     //  b._high_update_period=fast_update_period;
      //}
 
     drbe_wafer w(&t,300,(float)ppu_area);
@@ -388,6 +441,7 @@ int main(int argc, char* argv[]) {
     printf("%dmm^2 PPU (%0.2f), in-MB: %0.2f, clust: %d, coef_per_clust %d, "\
            "Agg nets: %d, Mem Ratio: %d, Coef per mm2: %0.2f, "\
            "avg_wafers: %0.2f, avg_ppus_per_link: %0.2f, per_1_wafer:%0.1f, fails: %d\n",
+
         ppu_area, 
         best_ppu->area(), 
         best_ppu->input_buf_area()*t._sram_Mb_per_mm2/8,
@@ -403,6 +457,15 @@ int main(int argc, char* argv[]) {
     //stats.print_wafer_histo();
     //printf("\n");
 
+    printf("Wafers Needed Histogram: ");
+    stats.print_wafer_histo();
+    printf("\n");
+    printf("Wafers (no GE) Needed Histogram: ");
+    stats.print_wafer_no_ge_histo();
+    printf("\n");
+    printf("GE Core Needed Histogram: ");
+    stats.print_ge_histo();
+    printf("\n");
     //best_ppu->print_params();
     //best_ppu->print_area_breakdown();
   //}
