@@ -129,7 +129,7 @@ class Band {
     return false;
   }
 
-  void increase_difficulty();
+  bool increase_difficulty();
   float normalized_distance_to(Band& other);
   std::vector<float>& normalized_vec();
 
@@ -139,6 +139,8 @@ class Band {
     printf("%d, %d, %d, %d, %d, %d", platforms(), reflectors(),
         _n_bands, _avg_coef_per_object, _n_fast, _range);
   }
+
+  void print_norm_csv();
 
   void recalculate_txrx() {
       // n_tx and n_rx indicate the number of 
@@ -199,16 +201,16 @@ class ScenarioGen {
 
       b.recalculate_txrx();
   
-      b._avg_coef_per_object = rand_rng(min_coef_per_obj,max_coef_per_obj);
+      b._avg_coef_per_object = (rand_rng(min_coef_per_obj,max_coef_per_obj) / 4) * 4;
       b._n_full_range_obj = b._n_fast;
-      b._range = rand_rng(min_range,max_range);
+      b._range = (rand_rng(min_range,max_range)/10)*10;
       
       b._high_update_period = rand_rng(10000 /*10us*/,100000 /*100us*/);
   
-      printf("Stationary obj: %d, Slow Obj: %d, Fast Obj: %d, bands %d,  \
-          coef_per_obj: %d, range: %d, update period: %f\n", 
-          b._n_fixed, b._n_slow, b._n_fast, b._n_bands, 
-          b._avg_coef_per_object, b._range, b._high_update_period);
+      //printf("Stationary obj: %d, Slow Obj: %d, Fast Obj: %d, bands %d,  \
+      //    coef_per_obj: %d, range: %d, update period: %f\n", 
+      //    b._n_fixed, b._n_slow, b._n_fast, b._n_bands, 
+      //    b._avg_coef_per_object, b._range, b._high_update_period);
   
       scene_vec.emplace_back(b);
     }
