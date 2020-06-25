@@ -132,8 +132,8 @@ class Band {
   bool increase_difficulty();
   float normalized_distance_to(Band& other);
   std::vector<float>& normalized_vec();
-
-
+  float Band::ge_mem(ge_core & ge, ge_stats & stats);
+  float Band::ge_comp_area(ge_core & ge, ge_stats & stats);
 
   void print_csv() {
     printf("%d, %d, %d, %d, %d, %d", platforms(), reflectors(),
@@ -169,6 +169,11 @@ class Band {
 
   float _low_update_period=1000000; //
   float _high_update_period=10000; //clock cycles?
+// Compute Area needed
+  int num_chiplet = 0;
+
+  // Bandwidth Needed
+  float ge_bandwidth = 0;
 
   std::vector<float> _norm_features;
 };
