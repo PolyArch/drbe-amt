@@ -12,6 +12,44 @@
 #include "hw.h"
 #include "util.h"
 
+struct ge_stats {
+  // Computation Area breakdown
+  float avg_relative_location_comp_area = 0.0;
+  float avg_affine_transform_comp_area = 0.0;
+  float avg_relative_motion_comp_area = 0.0;
+  float avg_path_gain_comp_area = 0.0;
+  float avg_path_delay_comp_area = 0.0;
+  float avg_ge_comp_area = 0.0;
+  // Total Computation Area breakdown
+  float total_relative_location_comp_area = 0.0;
+  float total_affine_transform_comp_area = 0.0;
+  float total_relative_motion_comp_area = 0.0;
+  float total_antenna_comp_area = 0.0;
+  float total_path_gain_comp_area = 0.0;
+  float total_path_delay_comp_area = 0.0;
+  float total_ge_comp_area = 0.0;
+  // Count
+  int num_ge_core = -1;
+  // Total Memory Bandwidth
+  float avg_mem_bandwidth = 0.0;
+  float total_mem_bandwidth = 0.0;
+  // Total Memory Capacity
+  float total_mem_bytes = 0.0;
+  // histogram
+  int chiplet_histo[100000];
+  int ge_core_histo[100000];
+  void print_chiplet_histo() {
+    for(int i = 1; i < 400; ++i) {
+      printf("%d ",chiplet_histo[i]);
+    }
+  }
+  void print_ge_core_histo() {
+    for(int i = 1; i < 400; ++i) {
+      printf("%d ",ge_core_histo[i]);
+    }
+  }
+};
+
 class Band {
   public:
   float coef_per_ppu(path_proc_unit& ppu, drbe_wafer& wafer, float& ppus_per_link, bool verbose = false) {
@@ -132,8 +170,8 @@ class Band {
   bool increase_difficulty();
   float normalized_distance_to(Band& other);
   std::vector<float>& normalized_vec();
-  float Band::ge_mem(ge_core & ge, ge_stats & stats);
-  float Band::ge_comp_area(ge_core & ge, ge_stats & stats);
+  float ge_mem(ge_core & ge, ge_stats & stats);
+  float ge_comp_area(ge_core & ge, ge_stats & stats);
 
   void print_csv() {
     printf("%d, %d, %d, %d, %d, %d", platforms(), reflectors(),

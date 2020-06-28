@@ -12,44 +12,6 @@ using namespace std;
 //    {0, 0, 0, 0,},
 //};
 
-struct ge_stats {
-  // Computation Area breakdown
-  float avg_relative_location_comp_area = 0.0;
-  float avg_affine_transform_comp_area = 0.0;
-  float avg_relative_motion_comp_area = 0.0;
-  float avg_path_gain_comp_area = 0.0;
-  float avg_path_delay_comp_area = 0.0;
-  float avg_ge_comp_area = 0.0;
-  // Total Computation Area breakdown
-  float total_relative_location_comp_area = 0.0;
-  float total_affine_transform_comp_area = 0.0;
-  float total_relative_motion_comp_area = 0.0;
-  float total_antenna_comp_area = 0.0;
-  float total_path_gain_comp_area = 0.0;
-  float total_path_delay_comp_area = 0.0;
-  float total_ge_comp_area = 0.0;
-  // Count
-  int num_ge_core = -1;
-  // Total Memory Bandwidth
-  float avg_mem_bandwidth = 0.0;
-  float total_mem_bandwidth = 0.0;
-  // Total Memory Capacity
-  float total_mem_bytes = 0.0;
-  // histogram
-  int chiplet_histo[100000];
-  int ge_core_histo[100000];
-  void print_chiplet_histo() {
-    for(int i = 1; i < 400; ++i) {
-      printf("%d ",chiplet_histo[i]);
-    }
-  }
-  void print_ge_core_histo() {
-    for(int i = 1; i < 400; ++i) {
-      printf("%d ",ge_core_histo[i]);
-    }
-  }
-};
-
 float Band::normalized_distance_to(Band &other) {
   auto& my_vec = normalized_vec();
   auto& other_vec = other.normalized_vec();
@@ -603,7 +565,7 @@ int main(int argc, char* argv[]) {
 
 
   // Design the GE core
-  drbe_wafer w(&t,300,(float)20);
+  //drbe_wafer w(&t,300,(float)20);
   ge_stats ge_core_stats;
   ge_core * ge = design_ge_core_for_scenario(scene_vec, w, ge_core_stats);
   printf("Chiplet Needed by GE Histogram: ");
