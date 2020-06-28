@@ -275,10 +275,12 @@ path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafe
 
   // AggNet computaitons
   for(int agg_network = 1; agg_network < 20; agg_network+=1) {
-  float bits_per_side=t._chiplet_io_bits_per_mm2*sqrt((float)ppu_area);
-  int total_ins_per_side = ceil(bits_per_side/32.0); //divide by 32 bit width
-  int remain=total_ins_per_side - (2*2 + agg_network*2);
-  if(remain < 2) break;
+    float side_length=sqrt((float)ppu_area);
+    //side_length -= 1; //leave one mm out
+    float bits_per_side=t._chiplet_io_bits_per_mm2*side_length;
+    int total_ins_per_side = ceil(bits_per_side/32.0); //divide by 32 bit width
+    int remain=total_ins_per_side - (2*2 + agg_network*2);
+    if(remain < 2) break;
 
     // Loop over coefficients per cluster
     for(int cpc = 10; cpc < 40; cpc+=5) {
@@ -377,12 +379,12 @@ int main(int argc, char* argv[]) {
     path_proc_unit* best_ppu = design_ppu_for_scenarios(scene_vec,w);
 
     PPUStats stats;
-    int num_wafers_target=100;
+    int num_wafers_target=1;
     evaluate_ppu(best_ppu,scene_vec,w,stats,num_wafers_target,false /*verbose*/);
 
     top_k_pareto_scenarios(best_ppu,scene_vec,w,5,num_wafers_target);
 
-    printf("Up Period: %0.9f ", fast_update_period);
+    printf("Fast Update Period: %0.0fus, ", fast_update_period/1000);
     printf("%dmm^2 PPU (%0.2f), in-MB: %0.2f, clust: %d, coef_per_clust %d, "\
            "Agg nets: %d, Mem Ratio: %d, Coef per mm2: %0.2f, "\
            "avg_wafers: %0.2f, avg_ppus_per_link: %0.2f, per_1_wafer:%0.1f, fails: %d\n",
