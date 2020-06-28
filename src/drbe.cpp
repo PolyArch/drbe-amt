@@ -17,7 +17,6 @@ struct ge_stats {
   float avg_relative_location_comp_area = 0.0;
   float avg_affine_transform_comp_area = 0.0;
   float avg_relative_motion_comp_area = 0.0;
-  float avg_antenna_comp_area = 0.0;
   float avg_path_gain_comp_area = 0.0;
   float avg_path_delay_comp_area = 0.0;
   float avg_ge_comp_area = 0.0;
@@ -249,7 +248,9 @@ void evaluate_ge(ge_core * ge, std::vector<Band>& scene_vec, drbe_wafer& w,
     b.ge_bandwidth += ge_bandwidth;
     //printf("Current Band requires %0.9f bandwidth (Byte/s)\n", ge_bandwidth);
     stats.num_ge_core += num_ge_core;
+    //printf("Scenario has %d chiplets, now add %d more chiplets for GE, ", b.num_chiplet, num_chiplet);
     b.num_chiplet += num_chiplet;
+    //printf("with GE chiplets, the total chiplets are %d\n", b.num_chiplet);
     stats.ge_core_histo[num_ge_core]++;
     stats.chiplet_histo[num_chiplet]++;
   }
@@ -257,7 +258,6 @@ void evaluate_ge(ge_core * ge, std::vector<Band>& scene_vec, drbe_wafer& w,
   stats.avg_relative_location_comp_area = stats.total_relative_location_comp_area / scene_vec.size();
   stats.avg_affine_transform_comp_area = stats.total_affine_transform_comp_area / scene_vec.size();
   stats.avg_relative_motion_comp_area = stats.total_relative_motion_comp_area / scene_vec.size();
-  stats.avg_antenna_comp_area = stats.total_antenna_comp_area / scene_vec.size();
   stats.avg_path_gain_comp_area = stats.total_path_gain_comp_area / scene_vec.size();
   stats.avg_path_delay_comp_area = stats.total_path_delay_comp_area / scene_vec.size();
 
@@ -276,7 +276,6 @@ ge_core * design_ge_core_for_scenario(std::vector<Band>& scene_vec, drbe_wafer& 
   ge->relative_location_comp_area = stats.avg_relative_location_comp_area;
   ge->affine_transform_comp_area = stats.avg_affine_transform_comp_area;
   ge->relative_motion_comp_area = stats.avg_relative_motion_comp_area;
-  ge->antenna_pattern_comp_area = stats.avg_antenna_comp_area;
   ge->path_gain_comp_area = stats.avg_path_gain_comp_area;
   ge->path_delay_comp_area = stats.avg_path_delay_comp_area;
   ge->mem_bandwidth = stats.avg_mem_bandwidth;
@@ -409,6 +408,7 @@ void evaluate_ppu(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer&
   float total_coef_per_ppu=0;
   float wafers=0, total_ppus_per_link=0, total_ge_area=0;;
   int total_in_target_wafer=0;
+
 
 
   for(auto & b : scene_vec) {
@@ -611,16 +611,20 @@ int main(int argc, char* argv[]) {
   
   printf("\n");
 
+  int total_num_links = 0;
   // Calculate the Number of Wafer needed (considering the GE)
   for(auto b : scene_vec){
     //printf("%d chiplets needed for this scenario, %d per wafer\n", b.num_chiplet, w.num_units());
-    int num_wafer = ceil(b.num_chiplet / w.num_units());
+    int num_wafer = ceil((float)b.num_chiplet / w.num_units());
     if(num_wafer <= 100000){
       stats.wafer_ppu_ge_histo[num_wafer]++;
     }else{
       //printf("Warning: %d wafers needed!\n", num_wafer);
     }
+    total_num_links += b.num_links();
   }
+  printf("Num Links = %d\n", total_num_links / scene_vec.size());
+
   printf("Wafer Needed by GE and PPU Histogram: ");
   stats.print_wafer_ge_ppu_histo();
   printf("\n");
@@ -629,25 +633,15 @@ int main(int argc, char* argv[]) {
           "Relative Location Computation (mm2):%f\n"\
           "Affine Transformation (mm2):%f\n"\
           "Relative Motion Computation (mm2):%f\n"\
-          "Antenna Pattern Computation (mm2):%f\n"\
           "Path Gain Computation (mm2):%f\n"\
           "Path Delay Computation (mm2):%f\n"\
           "Total Memory Bandwidth (bit/sec):%f\n"\
           "Total Memory needed (MByte):%f",
           ge_core_stats.avg_ge_comp_area,
           ge_core_stats.avg_relative_location_comp_area, ge_core_stats.avg_affine_transform_comp_area,
-          ge_core_stats.avg_relative_motion_comp_area, ge_core_stats.avg_antenna_comp_area,
+          ge_core_stats.avg_relative_motion_comp_area,
           ge_core_stats.avg_path_gain_comp_area, ge_core_stats.avg_path_delay_comp_area,
           ge_core_stats.total_mem_bandwidth/1024/1024,ge_core_stats.total_mem_bytes/1024/1024);
-  
-
-  printf("Chiplet Distribution Compute:\n");
-  int idx = 0;
-  //for(auto & b : scene_vec){
-  //  printf("%d ",b.num_chiplet);
-  //  idx ++;
-  //  if(idx > 1000) break;
-  //}
 
   return 0;
 }

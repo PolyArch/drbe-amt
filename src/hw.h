@@ -81,10 +81,6 @@ class ge_core : public hw_unit{
     relative_motion_comp_area = area;
   }
 
-  void set_antenna_comp_area(float area){
-    antenna_pattern_comp_area = area;
-  }
-
   void set_path_gain_comp_area(float area){
     path_gain_comp_area = area;
   }
@@ -101,6 +97,7 @@ class ge_core : public hw_unit{
 
   float mem_area(){
     dram_mem_area = get_antenna_pattern_mem() * 8 / tech ->_dram_Mb_per_mm2;
+    return dram_mem_area;
   }
 
   virtual float area(){
@@ -188,7 +185,6 @@ class ge_core : public hw_unit{
   float relative_location_comp_area = 0.0;
   float affine_transform_comp_area = 0.0;
   float relative_motion_comp_area = 0.0;
-  float antenna_pattern_comp_area = 0.0;
   float path_gain_comp_area = 0.0;
   float path_delay_comp_area = 0.0;
   float total_comp_area = 0.0;
