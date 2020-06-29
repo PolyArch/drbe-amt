@@ -11,9 +11,12 @@ public:
   float _fp_macc_per_mm2=400; //?
   float _int_macc_per_mm2=700;
   float _sram_Mb_per_mm2=8.1f;
+  float _dram_Mb_per_mm2=140.288; //0.137 Gb/mm2 -> 140.288 Mb / mm2
+  float _dram_frequency = 1e9;// DRAM frequency is 2GHz
   int _chiplet_io_bits_per_mm2=200;
   int _macc_per_complex_op=4;
   float _router_constant=1.2244e-7; // area of a 1-bit, 1input, 1output router in mm^2
+  float _flops_per_mm2_per_cycle = 9.8 * 2 / 1.25 / 0.68; // Ara 1.25 GHz, 9.8 DP-GFLOPS, Area = 0.68 mm2
 };
 
 class hw_unit {
@@ -60,7 +63,142 @@ class coef_storage : public hw_unit {
   path_proc_unit* ppu;
 };
 
+class ge_core : public hw_unit{
+  public:
+  ge_core(tech_params * t) : hw_unit(t){
+    tech = t;
+  }
 
+  void set_relative_location_comp_area(float area){
+    relative_location_comp_area = area;
+  }
+  
+  void set_affine_transform_comp_area(float area){
+    affine_transform_comp_area = area;
+  }
+
+  void set_relative_motion_comp_area(float area){
+    relative_motion_comp_area = area;
+  }
+
+  void set_path_gain_comp_area(float area){
+    path_gain_comp_area = area;
+  }
+
+  void set_path_delay_comp_area(float area){
+    path_delay_comp_area = area;
+  }
+
+  float comp_area(){
+    total_comp_area = relative_location_comp_area + affine_transform_comp_area
+      + relative_motion_comp_area + path_gain_comp_area + path_delay_comp_area;
+    return total_comp_area;
+  }
+
+  float mem_area(){
+    dram_mem_area = get_antenna_pattern_mem() * 8 / tech ->_dram_Mb_per_mm2;
+    return dram_mem_area;
+  }
+
+  virtual float area(){
+    return comp_area() + mem_area();
+  }
+
+  float get_antenna_pattern_ops(){
+    int mode = 3;
+    switch(mode){
+      case 0: 
+        // direct computation
+        return (K * 2) * log2(K) + 8 * K + N + X * K;
+      case 1: 
+        //Single angle computation
+        return A*(8 + 2*G*N) + N + X*A;
+      case 2: 
+        // Entirely stored patterns
+        return Y*K;
+      case 3: 
+        // Stored windows - whole pattern computation
+        return (K*2)*log2(K) + 8*K + N + Y*N;
+      case 4: 
+        // Stored windows - single angle computation
+        return A*(8 + 2*G*N) + N + Y*N;
+      default: 
+        return -1.0;
+    };
+  }
+
+  float get_antenna_pattern_mem(){
+    int mode = 3;
+    switch(mode){
+      case 0: 
+        // direct computation
+        return 4*K + 2*N;
+      case 1: 
+        //Single angle computation
+        return 4*A + 2*N;
+      case 2: 
+        // Entirely stored patterns
+        return 2*K;
+      case 3: 
+        // Stored windows - whole pattern computation
+        return 4*K + 2*N;
+      case 4: 
+        // Stored windows - single angle computation
+        return 4*A + 2*N;
+      default: 
+        return -1.0;
+    };
+  }
+
+  
+
+  // Anttena Pattern
+  int cos_approx_order = 8;       // Number of Taylor approximation terms for cosines
+  int exp_approx_order = 16;      // Number of Taylor approximation terms for complex exponentials
+
+  int N = 200; // Number of antennas
+  int K = 720; // Number of angular bins
+  int A = 100; // Number of angles of interest
+
+  int B = K/2;                    // Number of supported beamwidths
+  int C = K;                      // Number of supported beam angles
+  int S = N;                      // Number of antenna sizes
+  int D = 4;                      // Number of supported window functions
+
+  // Number of OPS for a cosine approx
+  int cos_ops = 2*cos_approx_order + cos_approx_order * cos_approx_order;
+  int X = 2*cos_ops + 4;          // OPS for the window function generation (Blackman)
+  // Number of OPS for a complex exponential approx
+  float G = (exp_approx_order + 2)*(exp_approx_order - 1)/2 + exp_approx_order;
+  int Y = 1;                      // OPS to retrieve from nonvolatile memory (per float)
+
+  int cos_lat = cos_approx_order + 2;               // cosine latency
+  int X_lat = cos_lat + 1;        // window function latency
+  int fft_lat = log2(N);          // FFT latency
+  int mac_lat = 1;                // MAC latency
+  int g_lat = 4;                  // complex exponential latency
+  int disk_lat = 1;               // disk retrieval latency
+
+  // ----------- Area ------------ 
+
+  // Compute
+  float relative_location_comp_area = 0.0;
+  float affine_transform_comp_area = 0.0;
+  float relative_motion_comp_area = 0.0;
+  float path_gain_comp_area = 0.0;
+  float path_delay_comp_area = 0.0;
+  float total_comp_area = 0.0;
+
+  // Capacity
+  float dram_mem_area = 0.0;
+
+  // ----------- Area ----------- 
+
+  // IO
+  float mem_bandwidth = 0.0;
+
+  tech_params * tech;
+};
 
 class path_proc_unit : public hw_unit {
 public:

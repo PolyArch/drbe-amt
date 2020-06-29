@@ -12,12 +12,9 @@ using namespace std;
 //    {0, 0, 0, 0,},
 //};
 
-
-
 float Band::normalized_distance_to(Band &other) {
   auto& my_vec = normalized_vec();
   auto& other_vec = other.normalized_vec();
-
   float dist = 0;
   for(unsigned i = 0; i < my_vec.size(); ++i) {
     float absdiff = abs(my_vec[i] - other_vec[i]);
@@ -83,6 +80,7 @@ bool Band::increase_difficulty() {
   }
 
 
+
 std::vector<float>& Band::normalized_vec() {
   if(_norm_features.size()==0) {
     _norm_features.push_back(platforms() / (float)ScenarioGen::max_platforms);
@@ -95,12 +93,77 @@ std::vector<float>& Band::normalized_vec() {
   return _norm_features;
 }
 
+float Band::ge_comp_area(ge_core & ge, ge_stats & stats){
+      // Considering Geometry Engine
+  // Relative Location Calculation
+  int fast_relative_loc_flop = 3 * (_n_tx * _n_fast + _n_fast * _n_rx + _n_tx * _n_rx);
+  int slow_relative_loc_flop = 3 * (_n_tx * _n_slow + _n_slow * _n_rx + _n_tx * _n_rx);
+  // Affine Transformation
+  int affine_transform_flop = 25 * _n_obj;
+  // Relative Motion
+  int fast_relative_mot_flop = 3 * (_n_tx * _n_fast + _n_fast * _n_rx + _n_tx * _n_rx);
+  int slow_relative_mot_flop = 3 * (_n_tx * _n_slow + _n_slow * _n_rx + _n_tx * _n_rx);
+  // Path Gain/Loss
+  int path_gain_flop = ge.get_antenna_pattern_ops() * num_links();//ge.get_antenna_pattern_ops() * num_links();//rand_rng(20, 2581) * num_links();
+  // Path Delay
+  int path_delay_flop = 20 * (_n_tx * _n_obj + _n_obj * _n_rx + _n_tx * _n_rx);
+
+  // Calculate the Geometry Engine Computation Unit Area
+  float frac_slow  = (float)(_n_slow)/((float)_n_obj);
+  float frac_fast  = (float)(_n_fast)/((float)_n_obj);
+  // relative location computation
+  float relative_location_comp_area = ((float)fast_relative_loc_flop/(float) _high_update_period
+                        + (float)slow_relative_loc_flop/(float) _low_update_period) / ge._t->_flops_per_mm2_per_cycle;
+  stats.total_relative_location_comp_area += relative_location_comp_area;
+  ge.set_relative_location_comp_area(relative_location_comp_area);
+  // affine transformation computation
+  float affine_transform_comp_area = (float)affine_transform_flop * ((float)frac_slow / (float)_low_update_period 
+                        + (float)frac_fast / (float)_high_update_period) / ge._t->_flops_per_mm2_per_cycle;
+  stats.total_affine_transform_comp_area += affine_transform_comp_area;
+  ge.set_affine_transform_comp_area(affine_transform_comp_area);
+
+  // relative motion
+  float relative_motion_comp_area = ((float)fast_relative_mot_flop/(float)_high_update_period 
+                        + (float)slow_relative_mot_flop/(float)_low_update_period) / ge._t->_flops_per_mm2_per_cycle;
+  stats.total_relative_motion_comp_area += relative_motion_comp_area;
+  ge.set_relative_motion_comp_area(relative_motion_comp_area);
+
+  // Antenna Pattern 
+  //float antenna_comp_area = ge.get_antenna_pattern_ops() * ((float)frac_slow / (float)_low_update_period 
+  //                      + (float)frac_fast / (float)_high_update_period) / ge._t->_flops_per_mm2_per_cycle;
+  //stats.total_antenna_comp_area += antenna_comp_area;
+  //ge.set_antenna_comp_area(antenna_comp_area);
+
+  // path gain computation
+  float path_gain_comp_area = (float)path_gain_flop * ((float)frac_slow / (float)_low_update_period 
+                        + (float)frac_fast / (float)_high_update_period) / ge._t->_flops_per_mm2_per_cycle;
+  stats.total_path_gain_comp_area += path_gain_comp_area;
+  ge.set_path_gain_comp_area(path_gain_comp_area);
+  
+  // path delay computation
+  float path_delay_comp_area = (float)path_delay_flop * ((float)frac_slow / (float)_low_update_period 
+                        + (float)frac_fast / (float)_high_update_period) / ge._t->_flops_per_mm2_per_cycle;
+  stats.total_path_delay_comp_area += path_delay_comp_area;
+  ge.set_path_delay_comp_area(path_delay_comp_area);
+
+  return ge.comp_area();
+}
+
+float Band::ge_mem(ge_core & ge, ge_stats & stats){
+  float mem_area = ge.mem_area();
+  float mem_required= ge.get_antenna_pattern_mem(); //byte
+  //printf("%f bytes per object", mem_required_per_object);
+  float mem_bandwidth = mem_required * 8; // (byte/sec)
+  stats.total_mem_bandwidth += mem_bandwidth;
+  stats.total_mem_bytes += mem_area;
+  return mem_bandwidth;
+}
+
 
 
 
 
 int get_best_ppu() {
-
   return 0;
 }
 
@@ -112,15 +175,84 @@ struct PPUStats {
   float percent_in_target_wafer=0;
 
   float avg_ppus_per_link=0;
-  int wafer_histo[100000];
-  int coef_per_mm2[100000]; 
+  int coef_per_mm2[100000];
 
+  // Histogram
+  int wafer_histo[100000];
+  int wafer_ppu_ge_histo[100000];
   void print_wafer_histo() {
     for(int i = 1; i < 400; ++i) {
       printf("%d ",wafer_histo[i]);
     }
   }
+
+  void print_wafer_ge_ppu_histo(){
+    for(int i = 1; i < 400; ++i) {
+      printf("%d ",wafer_ppu_ge_histo[i]);
+    }
+  }
 };
+
+void evaluate_ge(ge_core * ge, std::vector<Band>& scene_vec, drbe_wafer& w, 
+                ge_stats & stats){
+
+  
+  float total_ge_comp_area = 0.0;
+
+  for(auto& b : scene_vec) {
+    float ge_comp_area = b.ge_comp_area(*ge, stats);
+    float ge_bandwidth = b.ge_mem(*ge, stats);
+    total_ge_comp_area += ge_comp_area;
+    int num_ge_core = ceil(ge_comp_area / 0.68);
+    //printf("%f ge compute area needed, chiplet area is %f \n", ge_comp_area, w.chiplet_area());
+    int num_chiplet = ceil(ge_comp_area / w.chiplet_area());
+    //printf("before count the chiplet from GE, there are %d chiplets\n", b.num_chiplets());
+    b.ge_bandwidth += ge_bandwidth;
+    //printf("Current Band requires %0.9f bandwidth (Byte/s)\n", ge_bandwidth);
+    stats.num_ge_core += num_ge_core;
+    //printf("Scenario has %d chiplets, now add %d more chiplets for GE, ", b.num_chiplet, num_chiplet);
+    b.num_chiplet += num_chiplet;
+    //printf("with GE chiplets, the total chiplets are %d\n", b.num_chiplet);
+    stats.ge_core_histo[num_ge_core]++;
+    stats.chiplet_histo[num_chiplet]++;
+  }
+
+  stats.avg_relative_location_comp_area = stats.total_relative_location_comp_area / scene_vec.size();
+  stats.avg_affine_transform_comp_area = stats.total_affine_transform_comp_area / scene_vec.size();
+  stats.avg_relative_motion_comp_area = stats.total_relative_motion_comp_area / scene_vec.size();
+  stats.avg_path_gain_comp_area = stats.total_path_gain_comp_area / scene_vec.size();
+  stats.avg_path_delay_comp_area = stats.total_path_delay_comp_area / scene_vec.size();
+
+  stats.avg_mem_bandwidth = stats.total_mem_bandwidth  / scene_vec.size();
+
+  stats.avg_ge_comp_area = total_ge_comp_area / scene_vec.size();
+  stats.total_ge_comp_area = total_ge_comp_area;
+}
+
+ge_core * design_ge_core_for_scenario(std::vector<Band>& scene_vec, drbe_wafer& w, ge_stats & stats) {
+  ge_core* ge = new ge_core(&*w._t); //needs to be null so we don't delete a non-pointer
+
+  evaluate_ge(ge, scene_vec, w, stats);
+
+  // After evaluation, assign the average computation area as computation resource of GE
+  ge->relative_location_comp_area = stats.avg_relative_location_comp_area;
+  ge->affine_transform_comp_area = stats.avg_affine_transform_comp_area;
+  ge->relative_motion_comp_area = stats.avg_relative_motion_comp_area;
+  ge->path_gain_comp_area = stats.avg_path_gain_comp_area;
+  ge->path_delay_comp_area = stats.avg_path_delay_comp_area;
+  ge->mem_bandwidth = stats.avg_mem_bandwidth;
+  ge->dram_mem_area = ge->get_antenna_pattern_mem();
+
+  // make sure the bandwidth requirement meets
+  
+  int num_ge_core_per_chiplet = 20 / 0.68;
+  float max_bandwidth_per_chiplet = sqrt(w.chiplet_area()) * 200 / 8 * 1e9;
+  int max_core_per_core_by_bandwidth = max_bandwidth_per_chiplet / (num_ge_core_per_chiplet * ge -> mem_bandwidth);
+  printf("%d cores allowed, have %d cores\n", max_core_per_core_by_bandwidth, num_ge_core_per_chiplet);
+  assert(max_core_per_core_by_bandwidth > num_ge_core_per_chiplet);
+  
+  return ge;
+}
 
 bool model_succesful(path_proc_unit* ppu, Band& band, drbe_wafer& w, int max_wafers) {
   float ppus_per_link=0;
@@ -236,29 +368,36 @@ void evaluate_ppu(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer&
   stats.total_failures=0;
 
   float total_coef_per_ppu=0;
-  float wafers=0, total_ppus_per_link=0;
+  float wafers=0, total_ppus_per_link=0, total_ge_area=0;;
   int total_in_target_wafer=0;
 
-  for(auto& band : scene_vec) {
+
+
+  for(auto & b : scene_vec) {
     float ppus_per_link=0;
-    int coef_per_ppu = band.coef_per_ppu(*ppu,w,ppus_per_link,verbose);
+    int coef_per_ppu = b.coef_per_ppu(*ppu,w,ppus_per_link,verbose);
+
     if(coef_per_ppu==0) stats.total_failures+=1;
     total_ppus_per_link += ppus_per_link;
-
     total_coef_per_ppu += coef_per_ppu;
 
-    float ppus = band.num_links() * ppus_per_link;
+    float ppus = b.num_links() * ppus_per_link;
     float num_wafers = ppus / w.num_units();
+    int int_num_ppus = ceil(ppus);
+    //printf("%d chiplets (PPU) are needed for this scenario\n", int_num_ppus);
+    b.num_chiplet += int_num_ppus;
+    //printf("after count the chiplet from PPU, there are %d chiplets\n", b.num_chiplet);
     int int_num_wafers = ceil(num_wafers);
     if(int_num_wafers<=num_wafers_target) total_in_target_wafer++;
     wafers += int_num_wafers;
     assert(int_num_wafers<100000);
     stats.wafer_histo[int_num_wafers]++;
+    
     int int_avg_coef_per_mm2 = stats.avg_coef_per_ppu / w.chiplet_area();
     assert(int_avg_coef_per_mm2 < 100000);
     stats.coef_per_mm2[int_num_wafers]++;
-    //printf("Avg wafer: %d, PPUs: %f, band.num_links():%d, ppus_per_link:%f\n",
-    //    int_num_wafers, ppus, band.num_links(), ppus_per_link);
+    //printf("Avg wafer: %d, PPUs: %f, b.num_links():%d, ppus_per_link:%f\n",
+    //    int_num_wafers, ppus, b.num_links(), ppus_per_link);
   }
   stats.percent_in_target_wafer = total_in_target_wafer / (float) scene_vec.size();
   stats.avg_ppus_per_link = total_ppus_per_link / scene_vec.size();
@@ -282,8 +421,10 @@ path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafe
     int remain=total_ins_per_side - (2*2 + agg_network*2);
     if(remain < 2) break;
 
+
     // Loop over coefficients per cluster
     for(int cpc = 10; cpc < 40; cpc+=5) {
+
 
       for(int mem_ratio = 1; mem_ratio < 100; ++mem_ratio) {
         path_proc_unit* ppu =new path_proc_unit(&t);
@@ -303,6 +444,7 @@ path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafe
         PPUStats stats; 
         evaluate_ppu(ppu,scene_vec,w,stats,1);
 
+        //Optimize the average coefficient per mm2
         if((stats.avg_coef_per_mm2 > best_stats.avg_coef_per_mm2) && stats.total_failures==0) {
           path_proc_unit* old_best = best_ppu;
           best_stats = stats;
@@ -354,18 +496,20 @@ int main(int argc, char* argv[]) {
 
 
 
+
   
   printf("\n  --- DSE Summary --- \n");
 
   //for(int ppu_area = 20; ppu_area < 21; ppu_area+=5) {
   int ppu_area=20;
 
+
   float fast_update_period=10000;
   //for(fast_update_period = 1000; fast_update_period < 1000000; 
   //    fast_update_period*=1.2589254117941672104239541063958) {
 
-     //for(auto& band : scene_vec) {
-     //  band._high_update_period=fast_update_period;
+     //for(auto& b : scene_vec) {
+     //  b._high_update_period=fast_update_period;
      //}
 
     drbe_wafer w(&t,300,(float)ppu_area);
@@ -380,6 +524,12 @@ int main(int argc, char* argv[]) {
 
     PPUStats stats;
     int num_wafers_target=1;
+
+    // clear the number of chiplet of each band from previous evaluation
+    for(auto & b : scene_vec){
+      b.num_chiplet = 0;
+    }
+
     evaluate_ppu(best_ppu,scene_vec,w,stats,num_wafers_target,false /*verbose*/);
 
     top_k_pareto_scenarios(best_ppu,scene_vec,w,5,num_wafers_target);
@@ -388,6 +538,8 @@ int main(int argc, char* argv[]) {
     printf("%dmm^2 PPU (%0.2f), in-MB: %0.2f, clust: %d, coef_per_clust %d, "\
            "Agg nets: %d, Mem Ratio: %d, Coef per mm2: %0.2f, "\
            "avg_wafers: %0.2f, avg_ppus_per_link: %0.2f, per_1_wafer:%0.1f, fails: %d\n",
+
+
         ppu_area, 
         best_ppu->area(), 
         best_ppu->input_buf_area()*t._sram_Mb_per_mm2/8,
@@ -403,10 +555,55 @@ int main(int argc, char* argv[]) {
     //stats.print_wafer_histo();
     //printf("\n");
 
+
+    printf("PPU Wafer Needed (No GE) Histogram: ");
+    stats.print_wafer_histo();
+    printf("\n");
     //best_ppu->print_params();
     //best_ppu->print_area_breakdown();
   //}
 
+
+  // Design the GE core
+  //drbe_wafer w(&t,300,(float)20);
+  ge_stats ge_core_stats;
+  ge_core * ge = design_ge_core_for_scenario(scene_vec, w, ge_core_stats);
+  printf("Chiplet Needed by GE Histogram: ");
+  ge_core_stats.print_chiplet_histo();
+  
+  printf("\n");
+
+  int total_num_links = 0;
+  // Calculate the Number of Wafer needed (considering the GE)
+  for(auto b : scene_vec){
+    //printf("%d chiplets needed for this scenario, %d per wafer\n", b.num_chiplet, w.num_units());
+    int num_wafer = ceil((float)b.num_chiplet / w.num_units());
+    if(num_wafer <= 100000){
+      stats.wafer_ppu_ge_histo[num_wafer]++;
+    }else{
+      //printf("Warning: %d wafers needed!\n", num_wafer);
+    }
+    total_num_links += b.num_links();
+  }
+  printf("Num Links = %d\n", total_num_links / scene_vec.size());
+
+  printf("Wafer Needed by GE and PPU Histogram: ");
+  stats.print_wafer_ge_ppu_histo();
+  printf("\n");
+  printf("Breakdown of GE Computation Source:\n");
+  printf("Total Area (mm2):%f\n"\
+          "Relative Location Computation (mm2):%f\n"\
+          "Affine Transformation (mm2):%f\n"\
+          "Relative Motion Computation (mm2):%f\n"\
+          "Path Gain Computation (mm2):%f\n"\
+          "Path Delay Computation (mm2):%f\n"\
+          "Total Memory Bandwidth (bit/sec):%f\n"\
+          "Total Memory needed (MByte):%f",
+          ge_core_stats.avg_ge_comp_area,
+          ge_core_stats.avg_relative_location_comp_area, ge_core_stats.avg_affine_transform_comp_area,
+          ge_core_stats.avg_relative_motion_comp_area,
+          ge_core_stats.avg_path_gain_comp_area, ge_core_stats.avg_path_delay_comp_area,
+          ge_core_stats.total_mem_bandwidth/1024/1024,ge_core_stats.total_mem_bytes/1024/1024);
 
   return 0;
 }
