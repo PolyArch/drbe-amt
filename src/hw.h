@@ -90,21 +90,26 @@ class ge_core : public hw_unit{
   }
 
   float comp_area(){
-    total_comp_area = relative_location_comp_area + affine_transform_comp_area
-      + relative_motion_comp_area + path_gain_comp_area + path_delay_comp_area;
+    total_comp_area = 
+      relative_location_comp_area 
+      + affine_transform_comp_area
+      + relative_motion_comp_area 
+      + path_gain_comp_area 
+      + path_delay_comp_area;
     return total_comp_area;
   }
 
   float mem_area(){
-    dram_mem_area = get_antenna_pattern_mem() * 8 / tech ->_dram_Mb_per_mm2;
-    return dram_mem_area;
+    return mem_byte;
   }
 
   virtual float area(){
     return comp_area() + mem_area();
   }
 
-  float get_antenna_pattern_ops(){
+  // Antenna Pattern Computation Overhead
+
+  float get_4th_antenna_pattern_ops(){
     int mode = 3;
     switch(mode){
       case 0: 
@@ -127,7 +132,25 @@ class ge_core : public hw_unit{
     };
   }
 
-  float get_antenna_pattern_mem(){
+  float get_5th_antenna_pattern_ops(){
+    float ops = 0.0;
+
+    // For now, we treat all operations the same.
+
+    // NN index mapping
+    ops += (540 + 540 + 536);
+    // Y index calculation
+    ops += (2 + 4);
+    // Read indeices from X
+    ops += 3;
+    // Gain Calculation
+    ops += (3 + 2);
+    return ops;
+  }
+
+  // Memory Overhead
+
+  float get_4th_antenna_pattern_mem(){ // return in Byte
     int mode = 3;
     switch(mode){
       case 0: 
@@ -150,13 +173,16 @@ class ge_core : public hw_unit{
     };
   }
 
+  float get_5th_antenna_pattern_mem(){// Return in Byte
+    return 8.82 * 1e6 * 2;
+  }
   
 
   // Anttena Pattern
   int cos_approx_order = 8;       // Number of Taylor approximation terms for cosines
   int exp_approx_order = 16;      // Number of Taylor approximation terms for complex exponentials
 
-  int N = 200; // Number of antennas
+  int N = 256; // Number of antennas
   int K = 720; // Number of angular bins
   int A = 100; // Number of angles of interest
 
@@ -179,7 +205,7 @@ class ge_core : public hw_unit{
   int g_lat = 4;                  // complex exponential latency
   int disk_lat = 1;               // disk retrieval latency
 
-  // ----------- Area ------------ 
+  // ----------- Resource ------------ 
 
   // Compute
   float relative_location_comp_area = 0.0;
@@ -190,12 +216,9 @@ class ge_core : public hw_unit{
   float total_comp_area = 0.0;
 
   // Capacity
-  float dram_mem_area = 0.0;
+  float mem_byte = 0.0; // in byte
 
   // ----------- Area ----------- 
-
-  // IO
-  float mem_bandwidth = 0.0;
 
   tech_params * tech;
 };

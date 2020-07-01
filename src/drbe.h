@@ -24,17 +24,14 @@ struct ge_stats {
   float total_relative_location_comp_area = 0.0;
   float total_affine_transform_comp_area = 0.0;
   float total_relative_motion_comp_area = 0.0;
-  float total_antenna_comp_area = 0.0;
   float total_path_gain_comp_area = 0.0;
   float total_path_delay_comp_area = 0.0;
   float total_ge_comp_area = 0.0;
   // Count
   int num_ge_core = -1;
-  // Total Memory Bandwidth
-  float avg_mem_bandwidth = 0.0;
-  float total_mem_bandwidth = 0.0;
   // Total Memory Capacity
   float total_mem_bytes = 0.0;
+  float avg_mem_bytes = 0.0;
   // histogram
   int chiplet_histo[100000];
   int ge_core_histo[100000];
@@ -170,7 +167,7 @@ class Band {
   bool increase_difficulty();
   float normalized_distance_to(Band& other);
   std::vector<float>& normalized_vec();
-  float ge_mem(ge_core & ge, ge_stats & stats);
+  float ge_mem_byte(ge_core & ge, ge_stats & stats);
   float ge_comp_area(ge_core & ge, ge_stats & stats);
 
   void print_csv() {
@@ -197,9 +194,11 @@ class Band {
   int _n_bands;
 
   //Objects by speed
+  int _n_platform=0;
   int _n_slow=0;
   int _n_fast=0;
   int _n_fixed=0;
+  
 
   int _n_full_range_obj;
   int _avg_coef_per_object;
@@ -207,11 +206,23 @@ class Band {
 
   float _low_update_period=1000000; //
   float _high_update_period=10000; //clock cycles?
-// Compute Area needed
+  // Compute Area needed
   int num_chiplet = 0;
+  int num_ppu_chiplet = 0;
+  int num_ge_chiplet = 0;
+  float ge_area = 0.0;
 
-  // Bandwidth Needed
-  float ge_bandwidth = 0;
+  // Geometry Engine Resource 
+  float antenna_0th_comp = 0.0; // in 
+  float antenna_4th_comp = 0.0;
+  float antenna_5th_comp = 0.0;
+
+  float antenna_0th_mem = 0.0;
+  float antenna_4th_mem = 0.0;
+  float antenna_5th_mem = 0.0;
+
+  // Memory
+  float mem_byte = 0.0; //in mm2
 
   std::vector<float> _norm_features;
 };
@@ -232,7 +243,7 @@ class ScenarioGen {
       if(cutoff1>cutoff2) {
         std::swap(cutoff1,cutoff2);
       }
-     
+      b._n_platform = platforms;
       b._n_fixed = cutoff1;
       b._n_slow  = cutoff2 - cutoff1;
       b._n_fast = platforms - cutoff2;
@@ -250,16 +261,17 @@ class ScenarioGen {
       
       b._high_update_period = rand_rng(10000 /*10us*/,100000 /*100us*/);
   
-      //printf("Stationary obj: %d, Slow Obj: %d, Fast Obj: %d, bands %d,  \
-      //    coef_per_obj: %d, range: %d, update period: %f\n", 
-      //    b._n_fixed, b._n_slow, b._n_fast, b._n_bands, 
-      //    b._avg_coef_per_object, b._range, b._high_update_period);
-  
+  /*
+      printf("Stationary obj: %d, Slow Obj: %d, Fast Obj: %d, bands %d,  \
+          coef_per_obj: %d, range: %d, update period: %f\n", 
+          b._n_fixed, b._n_slow, b._n_fast, b._n_bands, 
+          b._avg_coef_per_object, b._range, b._high_update_period);
+  */
       scene_vec.emplace_back(b);
     }
   }
 
-  const static int min_platforms=40;
+  const static int min_platforms=20;
   const static int max_platforms=200;
   const static int min_bands=1;
   const static int max_bands=4;
