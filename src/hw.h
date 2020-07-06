@@ -13,7 +13,11 @@ public:
   float _sram_Mb_per_mm2=8.1f;
   float _dram_Mb_per_mm2=140.288; //0.137 Gb/mm2 -> 140.288 Mb / mm2
   float _dram_frequency = 1e9;// DRAM frequency is 2GHz
-  int _chiplet_io_bits_per_mm2=200;
+
+  //These are from uneeb's calculations
+  //2.56 Tb/s per side, if each side is 4.4mm
+  //Multiply by 2 for 4 layer
+  float _chiplet_io_bits_per_mm2=2.56/4.4*1024*2;
   int _macc_per_complex_op=4;
   float _router_constant=1.2244e-7; // area of a 1-bit, 1input, 1output router in mm^2
   float _flops_per_mm2_per_cycle = 9.8 * 2 / 1.25 / 0.68; // Ara 1.25 GHz, 9.8 DP-GFLOPS, Area = 0.68 mm2
@@ -30,12 +34,17 @@ public:
 };
 
 class router : hw_unit {
+  static const int MaxDegree=16;
 public:
   router(tech_params* t) : hw_unit(t) {
   }
   virtual float area() {
+    int num_networks = max(ceil(_in_degree/(float)MaxDegree), 
+                           ceil(_out_degree/(float)MaxDegree));
+
     float area=0;
-    area+=(_in_degree*4)*(_out_degree*4)*_bitwidth*_t->_router_constant;
+    area+=(_in_degree/num_networks*4)*(_out_degree/num_networks*4)*_bitwidth*_t->_router_constant;
+    area*=num_networks;
     return area;
   }
   int _in_degree=8;
@@ -258,7 +267,12 @@ public:
     float area_for_path_conv = total_area - area_for_ibuf - router_area();
 
     //Now set the amount of compute that scales with clusters
-    float cluster_area = _input_tap_fifo.area() + path_conv_area() + _coef_storage.area();
+    float cluster_area = path_conv_area() + _coef_storage.area();
+
+    if(!_is_direct_path) {
+      cluster_area+=_input_tap_fifo.area();
+    }
+
     float area_per_cluster = cluster_area / _num_clusters;
     int num_clusters = area_for_path_conv / area_per_cluster;
 
@@ -295,8 +309,14 @@ public:
   }
 
   virtual float area() {
-    return path_conv_area() + input_buf_area() + router_area() 
-      + _input_tap_fifo.area() + _coef_storage.area();
+    if(_is_direct_path) {
+      // Don't need _input_tap_fifo.area
+      return path_conv_area() + input_buf_area() + router_area() 
+         + _coef_storage.area();
+    } else {
+      return path_conv_area() + input_buf_area() + router_area() 
+        + _input_tap_fifo.area() + _coef_storage.area();
+    }
   }
 
   void print_params() {
@@ -329,6 +349,8 @@ public:
   int _input_bitwidth=32;
   int _coef_bitwidth=32;
   float _mem_ratio=-1;
+
+  bool _is_direct_path=false;
 };
 
 class drbe_wafer : public hw_unit {

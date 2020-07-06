@@ -53,15 +53,33 @@ struct ge_stats {
 class Band {
   public:
   float coef_per_ppu(path_proc_unit& ppu, drbe_wafer& wafer, float& ppus_per_link, bool verbose = false) {
-    if(ppu._num_clusters == 0) return 0;
+    if(ppu._num_clusters == 0) {
+      return 0;
+    }
 
     // First compute degree of multi-system required
     int total_buffer_needed = 3300000.0 * _range / 500;  
+
+    if(ppu._is_direct_path) {
+      total_buffer_needed /=2;  //Only need half the range for direct path
+    }
+
     int ppus_in_full_range = 1 + total_buffer_needed / ppu._input_buffer_length;
 
-    int objects_contributed_per_ppu 
-      = ceil( (_n_obj - _n_full_range_obj)/(float)ppus_in_full_range) +
+    int objects_contributed_per_ppu;
+    if(ppu._is_direct_path) {
+      // also need to expand ppus_in_full_range due to i/o limitations
+      // we're going to get _n_obj inputs
+      int io_ppus_per_side = ceil(_n_obj / ppu._output_router._in_degree);
+
+      ppus_in_full_range = max(ppus_in_full_range, io_ppus_per_side * io_ppus_per_side);
+
+      objects_contributed_per_ppu = ceil(_n_obj/(float)ppus_in_full_range);
+    } else {
+      objects_contributed_per_ppu = 
+        ceil( (_n_obj - _n_full_range_obj)/(float)ppus_in_full_range) +
         _n_full_range_obj;
+    }
 
     // ciel: b/c coef_per_clust may be too large
     int clusters_required_per_ppu_per_link = objects_contributed_per_ppu * 
@@ -78,12 +96,16 @@ class Band {
     int comp_constrainted_links_per_ppu = 
       input_replication_factor * ppu._num_clusters / clusters_required_per_ppu_per_link;
 
-    int num_links_sharing_ppu = min(ppu._output_router._in_degree,comp_constrainted_links_per_ppu);
+    //TODO: for now i don't think its worth it to consider multiple links sharing the same
+    //PPU for a direct-path model, b/c the I/O will almost always be the constraint.
+    int max_sharing_factor = ppu._is_direct_path ? 1 : ppu._output_router._in_degree;
+
+    int num_links_sharing_ppu = min(max_sharing_factor,comp_constrainted_links_per_ppu);
 
     int total_ppus_considered = ppus_in_full_range * input_replication_factor;
 
     float effective_coef_per_ppu = num_links_sharing_ppu * _n_obj * _avg_coef_per_object 
-      / total_ppus_considered;
+      / (float)total_ppus_considered;
 
 
     // We now need to take into account Wafer-level effects for coefficient updates
@@ -140,14 +162,25 @@ class Band {
     //return effective_coef_per_ppu;
     ppus_per_link = (float) total_ppus_considered / (float) num_links_sharing_ppu * fraction_ppus_active_due_to_coeff;
 
-    return effective_coef_per_ppu * fraction_ppus_active_due_to_coeff;
+    float ret_val = effective_coef_per_ppu * fraction_ppus_active_due_to_coeff;
+    assert(ret_val);
+    return ret_val;
   }
 
-  int num_links() {
-    int links_per_band = _n_tx * _n_rx;
+  int num_links(bool direct_path=false) {
+    int links_per_band;
+    if(direct_path) {
+      // No need to include self links for direct path
+      links_per_band = (_n_tx-1) * (_n_rx-1);
+    } else {
+      links_per_band = _n_tx * _n_rx;
+    }
+
     int total_links = links_per_band * _n_bands;
     return total_links;
   }
+
+
 
   int platforms() {
     return _n_slow + _n_fast + _n_fixed;
@@ -189,6 +222,7 @@ class Band {
       // objects in the scene that move are objects to model
       // Other objects get lost in clutter
       _n_obj = _n_slow + _n_fast;
+      _n_full_range_obj = _n_fast;
   }
 
   int _n_tx;
