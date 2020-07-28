@@ -8,11 +8,13 @@ using namespace std;
 
 class tech_params {
 public:
-  float _fp_macc_per_mm2=400; //?
-  float _int_macc_per_mm2=700;
-  float _sram_Mb_per_mm2=8.1f;
-  float _dram_Mb_per_mm2=140.288; //0.137 Gb/mm2 -> 140.288 Mb / mm2
-  float _dram_frequency = 1e9;// DRAM frequency is 2GHz
+  void set_area_multiplier(float m) {_area_multiplier = m;}
+  float area_multiplier() {return _area_multiplier;}
+  float fp_macc_per_mm2() {return _area_multiplier * _fp_macc_per_mm2;}
+  float int_macc_per_mm2(){return _area_multiplier * _int_macc_per_mm2;}
+  float sram_Mb_per_mm2() {return _area_multiplier * _sram_Mb_per_mm2;}
+  float router_constant() {return _area_multiplier * _router_constant;}
+  float mtr_per_mm2() {return _area_multiplier * 24000000;}
 
   //These are from uneeb's calculations
   //2.56 Tb/s per side, if each side is 4.4mm
@@ -20,7 +22,18 @@ public:
   float _chiplet_io_bits_per_mm2=2.56/4.4*1024*2;
   int _macc_per_complex_op=4;
   float _router_constant=1.2244e-7; // area of a 1-bit, 1input, 1output router in mm^2
+
+  // GE Params:
+  float _dram_Mb_per_mm2=140.288; //0.137 Gb/mm2 -> 140.288 Mb / mm2
+  float _dram_frequency = 1e9;// DRAM frequency is 2GHz
   float _flops_per_mm2_per_cycle = 9.8 * 2 / 1.25 / 0.68; // Ara 1.25 GHz, 9.8 DP-GFLOPS, Area = 0.68 mm2
+
+private:
+  float _area_multiplier=1.0;
+  float _fp_macc_per_mm2=400; //?
+  float _int_macc_per_mm2=700;
+  float _sram_Mb_per_mm2=8.1f;
+
 };
 
 class hw_unit {
@@ -252,7 +265,6 @@ public:
      _input_tap_fifo(from._input_tap_fifo) {
     _input_tap_fifo.ppu=this;
     _coef_storage.ppu=this;
-    printf("hi!\n");
   } 
 
   void set_params_by_mem_ratio(float mem_ratio, float total_area) {
@@ -280,7 +292,7 @@ public:
     //printf("mem ratio %f, total_area %f\n", mem_ratio, total_area);
 
     float area_for_ibuf = total_area * mem_ratio/100;
-    float MBits = area_for_ibuf * _t->_sram_Mb_per_mm2;
+    float MBits = area_for_ibuf * _t->sram_Mb_per_mm2();
     int bits = MBits*1024*1024;
     _input_buffer_length=bits/_input_bitwidth;
 
@@ -312,10 +324,10 @@ public:
     float area=0;
 
     int fixed_macc = _num_clusters * _coef_per_cluster; 
-    area += fixed_macc * (1.0/_t->_int_macc_per_mm2) * _t->_macc_per_complex_op;
+    area += fixed_macc * (1.0/_t->int_macc_per_mm2()) * _t->_macc_per_complex_op;
 
     int fp_macc = _num_clusters;
-    area += fp_macc * (1.0/_t->_fp_macc_per_mm2) * _t->_macc_per_complex_op;
+    area += fp_macc * (1.0/_t->fp_macc_per_mm2()) * _t->_macc_per_complex_op;
 
     return area;
   }
@@ -323,7 +335,7 @@ public:
   float input_buf_area() {
     float bits = _input_buffer_length * _input_bitwidth;
     float Mbits = bits/1024/1024;
-    float area = Mbits * (1.0/_t->_sram_Mb_per_mm2);
+    float area = Mbits * (1.0/_t->sram_Mb_per_mm2());
     return area;
   }
 
@@ -374,6 +386,7 @@ public:
   float _mem_ratio=-1;
 
   bool _is_direct_path=false;
+  bool _is_dyn_reconfig=false;
 };
 
 class drbe_wafer : public hw_unit {
@@ -384,7 +397,7 @@ public:
   }
 
   virtual float area() {
-    float side_len = 300/sqrt(2);
+    float side_len = _wafer_diameter/sqrt(2);
     float area = side_len * side_len;
     return area;
   }
@@ -399,7 +412,9 @@ public:
   }
   int num_units() {
     if(_num_units==0) {
-      _num_units = area()/_chiplet_area;
+      //_num_units = area()/_chiplet_area;
+     _num_units=2025;
+     // printf("num units: %d\n",_num_units);
     }
     return _num_units;
   }

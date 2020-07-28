@@ -55,27 +55,39 @@ class Band {
     }
 
     // First compute degree of multi-system required
-    int total_buffer_needed = 3300000.0 * _range / 500;  
+    int total_buffer_needed = 3300000.0 * _range / 500.0;  
 
     if(ppu._is_direct_path) {
       total_buffer_needed /=2;  //Only need half the range for direct path
     }
 
+    if(verbose) {
+      printf("input buffer length: %d\n",ppu._input_buffer_length);
+      printf("total_buffer_needed: %d\n",total_buffer_needed);
+    }
+
     int ppus_in_full_range = 1 + total_buffer_needed / ppu._input_buffer_length;
+
+    //printf("ppus_in_full_range: %d, mem_ratio %f\n",ppus_in_full_range,ppu._mem_ratio);
 
     int objects_contributed_per_ppu;
     if(ppu._is_direct_path) {
       // also need to expand ppus_in_full_range due to i/o limitations
       // we're going to get _n_obj inputs
-      int io_ppus_per_side = ceil(_n_obj / ppu._output_router._in_degree);
-
+      int io_ppus_per_side = ceil((float)_n_obj / (float)ppu._output_router._in_degree);
       ppus_in_full_range = max(ppus_in_full_range, io_ppus_per_side * io_ppus_per_side);
 
       objects_contributed_per_ppu = ceil(_n_obj/(float)ppus_in_full_range);
     } else {
-      objects_contributed_per_ppu = 
+      if(ppu._is_dyn_reconfig) {
+       objects_contributed_per_ppu = 
+        ceil( (_n_obj)/(float)ppus_in_full_range);
+      } else {
+       objects_contributed_per_ppu = 
         ceil( (_n_obj - _n_full_range_obj)/(float)ppus_in_full_range) +
         _n_full_range_obj;
+
+      }
     }
 
     // ciel: b/c coef_per_clust may be too large
@@ -158,6 +170,10 @@ class Band {
     
     //return effective_coef_per_ppu;
     ppus_per_link = (float) total_ppus_considered / (float) num_links_sharing_ppu * fraction_ppus_active_due_to_coeff;
+
+    if(verbose) {
+      printf("num_links_sharing_ppu %d, ppus per link %f\n\n\n",num_links_sharing_ppu,ppus_per_link);
+    }
 
     float ret_val = effective_coef_per_ppu * fraction_ppus_active_due_to_coeff;
     assert(ret_val);
@@ -267,20 +283,31 @@ class ScenarioGen {
   public:
 
   static void gen_scenarios(std::vector<Band>& scene_vec) {
+    // Lets always add the most difficult scenario -- comment this if you don't want it : )
+    Band b;
+    b._n_fixed = max_platforms -  max_reflectors;
+    b._n_slow = 0;
+    b._n_fast = max_reflectors;
+    b._n_bands = 1;
+    b.recalculate_txrx();
+    b._avg_coef_per_object = 60;
+    b._n_full_range_obj = b._n_fast;
+    b._range=max_range;
+    b._high_update_period = 10000; //10us
+    scene_vec.emplace_back(b); 
+
     // Scenario Generation
     for(int i_scene = 0; i_scene < 10000; i_scene++) {
       Band b;
       int platforms = rand_rng(min_platforms,max_platforms);
-  
-      int cutoff1 = rand_rng(0,platforms-1);
-      int cutoff2 = rand_rng(0,platforms);
-      if(cutoff1>cutoff2) {
-        std::swap(cutoff1,cutoff2);
-      }
-      b._n_platform = platforms;
-      b._n_fixed = cutoff1;
-      b._n_slow  = cutoff2 - cutoff1;
-      b._n_fast = platforms - cutoff2;
+      int max_rand_reflect = min(max_reflectors,max_platforms);
+      int num_reflectors = rand_rng(1,max_rand_reflect);
+
+      int slow = rand_rng(0,num_reflectors);
+
+      b._n_fixed = platforms-num_reflectors;
+      b._n_slow  = slow;
+      b._n_fast = num_reflectors-slow;
       //int half_fast = b._n_fast/2;
       //b._n_fast -= half_fast;
       //b._n_slow += half_fast;
@@ -307,6 +334,7 @@ class ScenarioGen {
 
   const static int min_platforms=20;
   const static int max_platforms=200;
+  const static int max_reflectors=100;
   const static int min_bands=1;
   const static int max_bands=4;
   const static int min_coef_per_obj=20;

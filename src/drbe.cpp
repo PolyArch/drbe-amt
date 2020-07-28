@@ -4,9 +4,11 @@
 using namespace std;
 
 static struct option long_options[] = {
-    {"direct-path",      required_argument, nullptr, 'a',},
+    {"direct-path",      required_argument, nullptr, 'd',},
+    {"dynamic-reconfig",      required_argument, nullptr, 'r',},
     {"print-pareto",     required_argument, nullptr, 'p',},
     {"verbose",        no_argument,       nullptr, 'v',},
+    {"verbose-ge-info", required_argument, nullptr, 'g',},
     {0, 0, 0, 0,},
 };
 
@@ -34,6 +36,7 @@ bool Band::increase_difficulty() {
       }
       case 1: { //upgrade a fixed to a slow object
         if(_n_fixed - 1 < 0) break;
+        if(reflectors() +1 >= ScenarioGen::max_reflectors) break;
         _n_fixed -= 1;
         _n_slow += 1;
         recalculate_txrx();
@@ -53,8 +56,8 @@ bool Band::increase_difficulty() {
         return true;
       }
       case 4: { //avg_coef_per_obj
-        if(_avg_coef_per_object +4 > ScenarioGen::max_coef_per_obj) break;
-        _avg_coef_per_object+=4;
+        if(_avg_coef_per_object +1 > ScenarioGen::max_coef_per_obj) break;
+        _avg_coef_per_object+=1;
         return true;
       }
       case 5: { //range
@@ -210,7 +213,7 @@ void evaluate_ge(ge_core * ge, std::vector<Band>& scene_vec, drbe_wafer& w,
   
   int idx = 0;
   for(auto & b : scene_vec) {
-    printf("band #%d, ", idx++);
+    //printf("band #%d, ", idx++);
     float ge_comp_area = b.ge_comp_area(*ge, stats);
     float ge_mem_byte = b.ge_mem_byte(*ge, stats);
     b.ge_area += ge_comp_area;
@@ -229,7 +232,7 @@ void evaluate_ge(ge_core * ge, std::vector<Band>& scene_vec, drbe_wafer& w,
     //printf("with GE chiplets, the total chiplets are %d\n", b.num_chiplet);
     stats.ge_core_histo[num_ge_core]++;
     stats.chiplet_histo[num_chiplet]++;
-    printf("finished\n");
+    //printf("finished\n");
   }
 
   // Compute Resource
@@ -413,7 +416,7 @@ void evaluate_ppu(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer&
     wafers += int_num_wafers;
     assert(int_num_wafers < 100000000);
     int max_histo_elem=sizeof(stats.wafer_histo)/sizeof(stats.wafer_histo[0]);
-    int_num_wafers=min(max_histo_elem-1,int_num_wafers);
+    int_num_wafers=max(0,min(max_histo_elem-1,int_num_wafers));
     stats.wafer_histo[int_num_wafers]++;
     
     int int_avg_coef_per_mm2 = stats.avg_coef_per_ppu / w.chiplet_area();
@@ -430,7 +433,7 @@ void evaluate_ppu(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer&
 }
 
 path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafer& w,
-                                         bool direct_path) {
+                                         bool direct_path, bool dynamic_reconfig) {
   PPUStats best_stats;
   path_proc_unit* best_ppu = NULL; //needs to be null so we don't delete a non-pointer
   float ppu_area = w.chiplet_area();
@@ -454,10 +457,11 @@ path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafe
     for(int cpc = 20; cpc < 21; cpc+=5) { //FIXME: turn off for speed
 
 
-      for(int mem_ratio = 1; mem_ratio < 50; ++mem_ratio) {
+      for(int mem_ratio =1; mem_ratio < 55; ++mem_ratio) {
         path_proc_unit* ppu =new path_proc_unit(&t);
 
         ppu->_is_direct_path=direct_path;
+        ppu->_is_dyn_reconfig=dynamic_reconfig;
         ppu->_coef_per_cluster=cpc;
         ppu->_input_router._in_degree=2;
         ppu->_input_router._out_degree=2;
@@ -503,13 +507,17 @@ int main(int argc, char* argv[]) {
   bool verbose = false;
   bool direct_path = false;
   bool print_pareto = false;
+  bool dynamic_reconfig = false;
+  bool verbose_ge_info = false;
   tech_params t;
 
   int opt;
-  while ((opt = getopt_long(argc, argv, "vdp", long_options, nullptr)) != -1) {
+  while ((opt = getopt_long(argc, argv, "vdpr", long_options, nullptr)) != -1) {
     switch (opt) {
       case 'd': direct_path=true; break;
+      case 'r': dynamic_reconfig=true; break;
       case 'v': verbose = true; break;
+      case 'g': verbose_ge_info = true; break;
       case 'p': print_pareto = true; break;
       default: exit(1);
     }
@@ -529,10 +537,12 @@ int main(int argc, char* argv[]) {
 
 
 
+  // You can run different experiments by uncommenting different loops here ... we should make this
+  // more configurable in the future. : )
   
 
-  for(int ppu_area = 20; ppu_area < 21; ppu_area+=5) {
-  //int ppu_area=20;
+  //for(int ppu_area = 20; ppu_area < 21; ppu_area+=5) {
+  int ppu_area=20;
 
 
   float fast_update_period=10000;
@@ -545,10 +555,13 @@ int main(int argc, char* argv[]) {
 
   drbe_wafer w(&t,300,(float)ppu_area);
 
-  float old = t._int_macc_per_mm2;
-  float range = 1;
-  for(float v = old/range; v < old*range+0.01; v*=1.0905077326652576) {
-    t._int_macc_per_mm2=v;
+  printf("\nTechnology Density Experiment: Increase the Density (factor \"v\" below)\n");
+  float old = t.area_multiplier();
+  float v_range = 4;
+  float factor = 1.0905077326652576;
+  factor = factor * factor * factor * factor; // four times less datapoints
+  for(float v = old; v < old*v_range+0.01; v*=factor) {
+    t.set_area_multiplier(v);
 
 
   //for(int spmm = 1; spmm < 200; ++spmm) {
@@ -557,10 +570,10 @@ int main(int argc, char* argv[]) {
     //for(int agg_network = 1; agg_network < 200; agg_network+=1) {
     //agg_network=11
 
-    path_proc_unit* best_ppu = design_ppu_for_scenarios(scene_vec,w,direct_path);
+    path_proc_unit* best_ppu = design_ppu_for_scenarios(scene_vec,w,direct_path,dynamic_reconfig);
 
     PPUStats stats;
-    int num_wafers_target=1;
+    int num_wafers_target=16;
 
     // clear the number of chiplet of each band from previous evaluation
     for(auto & b : scene_vec){
@@ -579,11 +592,9 @@ int main(int argc, char* argv[]) {
     printf("%dmm^2 PPU (%0.2f), in-MB: %0.2f, clust: %d, coef_per_clust %d, "\
            "In: %d/%d Agg: %d/%d, Coef:%d/%d, Mem Ratio: %d, Coef per mm2: %0.2f, "\
            "avg_wafers: %0.2f, avg_ppus_per_link: %0.2f, per_1_wafer:%0.1f, fails: %d\n",
-
-
         ppu_area, 
         best_ppu->area(), 
-        best_ppu->input_buf_area()*t._sram_Mb_per_mm2/8,
+        best_ppu->input_buf_area()*t.sram_Mb_per_mm2()/8,
         best_ppu->_num_clusters, best_ppu->_coef_per_cluster,
         best_ppu->_input_router._in_degree, 
         best_ppu->_input_router._out_degree, 
@@ -597,6 +608,13 @@ int main(int argc, char* argv[]) {
         stats.avg_ppus_per_link,
         stats.percent_in_target_wafer*100,
         stats.total_failures);
+
+    printf("wafer_sram_MB: %0.2f, wafer_macc/s: %0.2f\n", 
+        2025 * (best_ppu->input_buf_area() + best_ppu->_input_tap_fifo.area() 
+               + best_ppu->_coef_storage.area())*t.sram_Mb_per_mm2()/8,
+        2025 * best_ppu->_num_clusters*best_ppu->_coef_per_cluster*t._macc_per_complex_op/1024.0);
+
+
     //printf("Wafers Needed Histogram: ");
     //stats.print_wafer_histo();
     //printf("\n");
@@ -702,11 +720,14 @@ int main(int argc, char* argv[]) {
   }
   
   
-  printf("The percentage of Covered Scenarios for different number of GE chiplets:\n");
-  for(int idx = 0; idx < total_num_chiplet; idx ++){
-    printf("%d ", ge_percentage_scenario_covered[idx]);
+  if(verbose_ge_info) {
+    printf("The percentage of Covered Scenarios for different number of GE chiplets:\n");
+    for(int idx = 0; idx < total_num_chiplet; idx ++){
+      printf("%d ", ge_percentage_scenario_covered[idx]);
+    }
+    printf("\n");
   }
-  printf("\n");
+
   delete ge_percentage_scenario_covered;
 
   // ------- PPU vs. GE + GM DSE ------

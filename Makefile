@@ -2,6 +2,7 @@ TARGET_EXEC ?= drbe_abs_model
 
 BUILD_DIR ?= ./build
 SRC_DIRS ?= ./src
+OPT ?= O3
 
 SRCS := $(shell find $(SRC_DIRS) -name *.cpp -or -name *.c)
 OBJS := $(SRCS:%=$(BUILD_DIR)/%.o)
@@ -10,7 +11,7 @@ DEPS := $(OBJS:.o=.d)
 INC_DIRS := $(shell find $(SRC_DIRS) -type d)
 INC_FLAGS := $(addprefix -I,$(INC_DIRS))
 
-CPPFLAGS ?= $(INC_FLAGS) -MMD -MP -g -O3 -Wall
+CPPFLAGS ?= $(INC_FLAGS) -MMD -MP -g -$(OPT) -Wall
 
 $(BUILD_DIR)/$(TARGET_EXEC): $(OBJS)
 	$(CXX) $(OBJS) -o $@ $(LDFLAGS)
