@@ -67,23 +67,27 @@ class Band {
     float frac_slow  = (float)(_n_slow) /((float)n_platform);
     //float frac_fast  = (float)(_n_fast)/((float)n_platform);
 
-    float frac_txrx_fixed_or_slow  = (frac_slow+frac_fixed) * (frac_slow+frac_fixed);
-    float frac_txrx_fast = 1 - frac_txrx_fixed_or_slow;
+    float frac_txrx_fixed=frac_fixed * frac_fixed;
+    float frac_txrx_fixed_or_slow  = frac_slow*frac_slow - frac_txrx_fixed;
+    float frac_txrx_fast = 1 - frac_txrx_fixed_or_slow - frac_txrx_fixed;
 
 
+    float frac_speed_vec[3] ={frac_txrx_fixed,frac_txrx_fixed_or_slow,frac_txrx_fast};
     float total_ppus=0;
 
     //iterate over combinations of fast and slow ppus
-    for(int fast = 0; fast < 2; ++fast) {
+    for(int speed = 0; speed < 3; ++speed) {
       for(int clutter = 0; clutter < 2; ++clutter) {
-        float links_per_ppu = calc_links_per_ppu(ppu,w,fast,clutter,verbose);
+        float links_per_ppu = calc_links_per_ppu(ppu,w,speed,clutter,verbose);
         if(links_per_ppu==0) {
           failures+=1;
           continue;
         }
-        float frac_speed = fast==0 ? frac_txrx_fixed_or_slow : frac_txrx_fast;
+        float frac_speed = frac_speed_vec[speed];
         float frac_clutter = clutter==0 ? (1-_frac_clutter) : _frac_clutter;
         float frac= frac_speed * frac_clutter;
+
+        if(frac==0) continue; //save some time : )
 
         float ppus = ceil(num_links() * frac / links_per_ppu);
 
@@ -96,9 +100,9 @@ class Band {
   }
               
 
-
+  //fast==0 (fixed), fast==1
   float calc_links_per_ppu(path_proc_unit& ppu, drbe_wafer& wafer, 
-                     bool fast_txrx, bool clutter,
+                     int speed_txrx, bool clutter,
                      bool verbose = false) {
     if(ppu._num_clusters == 0) {
       return 0;
@@ -108,7 +112,7 @@ class Band {
     int total_buffer_needed = 3300000.0 * _range / 500.0;  
 
     if(_is_direct_path || _is_scatter_sep) {
-      total_buffer_needed /=2;  //Only need half the range for direct path
+      total_buffer_needed /= 2;  //Only need half the range for direct path
     }
 
     if(verbose) {
@@ -144,14 +148,46 @@ class Band {
       }
     } 
 
+    float clutter_objects=0;
+
+    if(clutter) {
+      clutter_objects=objects_contributed_per_ppu;
+      objects_contributed_per_ppu+=clutter_objects;
+    }
+
+    
 
     // ciel: b/c coef_per_clust may be too large
     int clusters_required_per_ppu_per_link = objects_contributed_per_ppu * 
                         ceil((float)_avg_coef_per_object / (float)ppu._coef_per_cluster);  
 
     // How many replicas do we need to make
-    int input_replication_factor = ceil(clusters_required_per_ppu_per_link 
+    int obj_input_replication_factor = ceil(clusters_required_per_ppu_per_link 
                                         / (float)ppu._num_clusters);
+
+
+
+    //how many flexible cluters do we require
+    //1. if we are fast or slow, then we require clutter clusters to be flexible
+    //2. if we are fixed, no clutter clusters need to be flexible
+
+    int clutter_input_replication_factor = 0;
+   
+    if(speed_txrx!=0) { //if not fixed txrx
+      // We're goint to need flexible clusters...
+      int clutter_clusters_required_per_ppu_per_link = clutter_objects * 
+                          ceil((float)_avg_coef_per_object / (float)ppu._coef_per_cluster);  
+
+      // How many replicas do we need to make
+      clutter_input_replication_factor = ceil(clutter_clusters_required_per_ppu_per_link 
+                                          / (float)ppu.num_flexible_clusters());
+
+    }
+
+
+    int input_replication_factor = max(obj_input_replication_factor,
+                                     clutter_input_replication_factor);
+
 
     if(verbose) {
       printf("obj/ppu/link %d, clusters/ppu/link : %d\n, input repl: %d\n",
@@ -163,6 +199,7 @@ class Band {
 
     //if(clusters_required_per_ppu_per_link > ppu._num_clusters) return 0;
 
+    //Redistributed the links in integer number of PPUS
     int comp_constrainted_links_per_ppu = 
       input_replication_factor * ppu._num_clusters / clusters_required_per_ppu_per_link;
 
@@ -194,7 +231,7 @@ class Band {
 
 
     float frac_slow, frac_fast;
-    if(fast_txrx) {
+    if(speed_txrx==2) { //FAST sees all as fast
       frac_slow = 0;
       frac_fast = 1;
     } else {
@@ -363,7 +400,7 @@ class ScenarioGen {
     //scene_vec.emplace_back(b); 
 
     // Scenario Generation
-    for(int i_scene = 0; i_scene < 10000; i_scene++) {
+    for(int i_scene = 0; i_scene < 1000; i_scene++) {
       Band b;
       int platforms = rand_rng(min_platforms,max_platforms);
       int max_rand_reflect = min(max_reflectors,max_platforms);

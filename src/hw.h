@@ -22,7 +22,7 @@ public:
   //These are from uneeb's calculations
   //2.56 Tb/s per side, if each side is 4.4mm
   //Multiply by 2 for 4 layer I/O
-  float _chiplet_io_bits_per_mm2=2.56/4.4*1024*2;
+  float _chiplet_io_bits_per_mm2=2.56/4.4*1024;
   float _router_constant=1.2244e-7; // area of a 1-bit, 1input, 1output router in mm^2
 
   // GE Params:
@@ -272,7 +272,8 @@ public:
   void set_params_by_mem_ratio(float mem_ratio, float clutter_ratio, float total_area) {
     _mem_ratio = mem_ratio;
     _num_clusters=100;
-    _num_flexible_clusters=_num_clusters*clutter_ratio/100;
+    _num_flexible_clusters=max(1.0f,_num_clusters*clutter_ratio/100);
+
     for(int i = 0; i < 4; ++i) {
       set_params_by_mem_ratio_once(mem_ratio,clutter_ratio,total_area);
       if(_num_clusters<=0) {
@@ -280,12 +281,14 @@ public:
         return;
       }
     }
+
     assert(_input_tap_fifo.area()>0);
     assert(_input_router.area()>0);
     assert(_input_router.area()>0);
     assert(_output_router.area()>0);
     assert(_coef_router.area()>0);
     assert(path_conv_area()>0);
+    assert(_num_flexible_clusters>0); //need one flex cluster for clutter
 
   }
 
@@ -315,7 +318,7 @@ public:
     //printf("area per 1 cluster: %f\n",area_per_cluster);
 
     _num_clusters = num_clusters;
-    _num_flexible_clusters = num_clusters*clutter_ratio/100;
+    _num_flexible_clusters = max(1.0f,num_clusters*clutter_ratio/100);
   }
 
   void init() {
@@ -369,6 +372,13 @@ public:
 
     printf("Input Tap Fifo Area: %f\n", _input_tap_fifo.area());
     printf("Coef. Storage Area: %f\n", _coef_storage.area());
+  }
+
+  // we want to avoid div by 0, so lets not return 0
+  float num_flexible_clusters() {
+    //if(_num_flexible_clusters==0) return 0.001;
+    assert(_num_flexible_clusters>0); //ah screw it
+    return _num_flexible_clusters;
   }
 
   router _coef_router;

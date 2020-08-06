@@ -480,9 +480,15 @@ path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafe
       // Loop over coefficients per cluster
       for(int cpc = 20; cpc < 21; cpc+=5) { //FIXME: turn off for speed
 
-        for(int clutter_ratio = 0; clutter_ratio <= 0; clutter_ratio+=10) {
 
-          for(int mem_ratio =1; mem_ratio < 60; ++mem_ratio) {
+        for(int clutter_index = 10; clutter_index <= 100; clutter_index+=1) {
+          int clutter_ratio=clutter_index;
+          if(clutter_index==0) {
+            clutter_ratio=1;
+          }
+
+
+          for(int mem_ratio =20; mem_ratio < 40; mem_ratio+=2) {
             path_proc_unit* ppu =new path_proc_unit(&t);
 
             ppu->_is_dyn_reconfig=dynamic_reconfig;
@@ -578,23 +584,29 @@ int main(int argc, char* argv[]) {
   int ppu_area=20;
 
 
-  float fast_update_period=10000;
-  //for(fast_update_period = 1000; fast_update_period < 1000000; 
-  //    fast_update_period*=1.2589254117941672104239541063958) {
-
-     //for(auto& b : scene_vec) {
-     //  b._high_update_period=fast_update_period;
-     //}
-
   drbe_wafer w(&t,300,(float)ppu_area);
 
-  printf("\nTechnology Density Experiment: Increase the Density (factor \"v\" below)\n");
-  float old = t.area_multiplier();
-  float v_range = 4;
-  float factor = 1.0905077326652576;
-//  factor = factor * factor; // * factor * factor; // four times less datapoints
-  for(float v = old; v < old*v_range+0.01; v*=factor) {
-    t.set_area_multiplier(v);
+  //float fast_update_period=10000;
+  
+  //for(fast_update_period = 1000; fast_update_period < 1000000; 
+  //    fast_update_period*=1.2589254117941672104239541063958) {
+  
+  for(float clutter_ratio = 0; clutter_ratio <= 100; clutter_ratio+=10) {
+
+    for(auto& b : scene_vec) {
+      //b._high_update_period=fast_update_period;
+      b._frac_clutter = clutter_ratio/100.0f;
+    }
+
+  //printf("\nTechnology Density Experiment: Increase the Density (factor \"v\" below)\n");
+  //float old = t.area_multiplier();
+  //float v_range = 4;
+  //float factor = 1.0905077326652576;
+////  factor = factor * factor; // * factor * factor; // four times less datapoints
+  //for(float v = old; v < old*v_range+0.01; v*=factor) {
+  //  t.set_area_multiplier(v);
+
+  
 
 
   //for(int spmm = 1; spmm < 200; ++spmm) {
@@ -621,7 +633,7 @@ int main(int argc, char* argv[]) {
 
     //printf("Fast Update Period: %0.0fus, ", fast_update_period/1000);
     
-    printf("v: %0.3f, ", v);
+    //printf("v: %0.3f, ", v);
     printf("%dmm^2 PPU (%0.2f), in-MB: %0.2f, clust: %d, flex_clust: %d, coef/clust %d, "\
            "In: %d/%d Agg: %d/%d, Coef: %d/%d, Mem Ratio: %d, "\
            "ppus/die: %d, " \
