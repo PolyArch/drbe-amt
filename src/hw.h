@@ -4,6 +4,9 @@
 #include <iostream>
 #include <assert.h>
 
+// Math Constants
+#define SCALAR_MACC_PER_COMPLEX_MACC (4)
+
 using namespace std;
 
 class tech_params {
@@ -18,9 +21,8 @@ public:
 
   //These are from uneeb's calculations
   //2.56 Tb/s per side, if each side is 4.4mm
-  //Multiply by 2 for 4 layer
+  //Multiply by 2 for 4 layer I/O
   float _chiplet_io_bits_per_mm2=2.56/4.4*1024*2;
-  int _macc_per_complex_op=4;
   float _router_constant=1.2244e-7; // area of a 1-bit, 1input, 1output router in mm^2
 
   // GE Params:
@@ -267,11 +269,12 @@ public:
     _coef_storage.ppu=this;
   } 
 
-  void set_params_by_mem_ratio(float mem_ratio, float total_area) {
+  void set_params_by_mem_ratio(float mem_ratio, float clutter_ratio, float total_area) {
     _mem_ratio = mem_ratio;
     _num_clusters=100;
+    _num_flexible_clusters=_num_clusters*clutter_ratio/100;
     for(int i = 0; i < 4; ++i) {
-      set_params_by_mem_ratio_once(mem_ratio,total_area);
+      set_params_by_mem_ratio_once(mem_ratio,clutter_ratio,total_area);
       if(_num_clusters<=0) {
         _num_clusters=0;
         return;
@@ -286,7 +289,7 @@ public:
 
   }
 
-  void set_params_by_mem_ratio_once(float mem_ratio, float total_area) {
+  void set_params_by_mem_ratio_once(float mem_ratio, float clutter_ratio, float total_area) {
     //First set the input buffer length
     
     //printf("mem ratio %f, total_area %f\n", mem_ratio, total_area);
@@ -304,17 +307,15 @@ public:
     //Now set the amount of compute that scales with clusters
     float cluster_area = path_conv_area() + _coef_storage.area();
 
-    if(!_is_direct_path) {
-      cluster_area+=_input_tap_fifo.area();
-    }
+    cluster_area+=_input_tap_fifo.area();
 
     float area_per_cluster = cluster_area / _num_clusters;
-    int num_clusters = area_for_path_conv / area_per_cluster;
 
+    int num_clusters = area_for_path_conv / area_per_cluster;
     //printf("area per 1 cluster: %f\n",area_per_cluster);
 
     _num_clusters = num_clusters;
-
+    _num_flexible_clusters = num_clusters*clutter_ratio/100;
   }
 
   void init() {
@@ -324,10 +325,13 @@ public:
     float area=0;
 
     int fixed_macc = _num_clusters * _coef_per_cluster; 
-    area += fixed_macc * (1.0/_t->int_macc_per_mm2()) * _t->_macc_per_complex_op;
+    fixed_macc += _num_flexible_clusters * _coef_per_cluster;
+    area += fixed_macc * (1.0/_t->int_macc_per_mm2()) * SCALAR_MACC_PER_COMPLEX_MACC;
 
+    // These are FP ops for doppler + aggregating clusters
+    // This is a bit conservative, since uneeb said that we don't need FP for this
     int fp_macc = _num_clusters;
-    area += fp_macc * (1.0/_t->fp_macc_per_mm2()) * _t->_macc_per_complex_op;
+    area += fp_macc * (1.0/_t->fp_macc_per_mm2()) * SCALAR_MACC_PER_COMPLEX_MACC;
 
     return area;
   }
@@ -344,14 +348,8 @@ public:
   }
 
   virtual float area() {
-    if(_is_direct_path) {
-      // Don't need _input_tap_fifo.area
-      return path_conv_area() + input_buf_area() + router_area() 
-         + _coef_storage.area();
-    } else {
-      return path_conv_area() + input_buf_area() + router_area() 
-        + _input_tap_fifo.area() + _coef_storage.area();
-    }
+    return path_conv_area() + input_buf_area() + router_area() 
+      + _input_tap_fifo.area() + _coef_storage.area();
   }
 
   void print_params() {
@@ -378,14 +376,15 @@ public:
   router _output_router;
   coef_storage _coef_storage;
   input_tap_fifo _input_tap_fifo;
+  int _ppus_per_chiplet=1;
   int _num_clusters=140;
+  int _num_flexible_clusters=70; // subset of clusters, can be used for clutter
   int _coef_per_cluster=20;
   int _input_buffer_length=3300100;
   int _input_bitwidth=32;
   int _coef_bitwidth=32;
   float _mem_ratio=-1;
 
-  bool _is_direct_path=false;
   bool _is_dyn_reconfig=false;
 };
 
