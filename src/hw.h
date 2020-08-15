@@ -22,7 +22,7 @@ public:
   //These are from uneeb's calculations
   //2.56 Tb/s per side, if each side is 4.4mm
   //Multiply by 2 for 4 layer I/O
-  float _chiplet_io_bits_per_mm2=2.56/4.4*1024;
+  float _chiplet_io_bits_per_mm2=2.56/4.4*1024*2;
   float _router_constant=1.2244e-7; // area of a 1-bit, 1input, 1output router in mm^2
 
   // GE Params:
@@ -427,6 +427,9 @@ public:
     }
     return _num_units;
   }
+
+  
+
   void reset_computed() {
     _num_units=0;
   }
@@ -437,10 +440,23 @@ public:
 
   float chiplet_area() {return _chiplet_area;}
 
+  bool limit_wafer_io() {
+    return _limit_wafer_io;
+  }
+  void set_limit_wafer_io(bool v) {
+    _limit_wafer_io=v;
+  }
+
+  int max_input()  {return _max_input;}
+  int max_output() {return _max_output;}
+
 private:
   int _wafer_diameter=0; //mm^2
   float _chiplet_area=0;
   int _num_units=0;
+  bool _limit_wafer_io=false;
   path_proc_unit* _ppu=0;
+  int _max_input=200;
+  int _max_output=200;
 };
 

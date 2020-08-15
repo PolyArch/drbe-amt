@@ -4,12 +4,15 @@
 using namespace std;
 
 static struct option long_options[] = {
-    {"direct-path",      no_argument, nullptr, 'd',},
-    {"scatter-sep",      no_argument, nullptr, 's',},
-    {"dynamic-reconfig", no_argument, nullptr, 'r',},
-    {"print-pareto",     no_argument, nullptr, 'p',},
-    {"verbose",          no_argument, nullptr, 'v',},
-    {"verbose-ge-info",  no_argument, nullptr, 'g',},
+    {"direct-path",        no_argument,       nullptr, 'd',},
+    {"kp-aidp",            no_argument,       nullptr, 'k',},
+    {"dynamic-reconfig",   no_argument,       nullptr, 'r',},
+    {"print-pareto",       no_argument,       nullptr, 'p',},
+    {"challenge-scenario", no_argument,       nullptr, 'c',},
+    {"num-scenarios",      required_argument, nullptr, 'n',},
+    {"verbose",            no_argument,       nullptr, 'v',},
+    {"verbose-ge-info",    no_argument,       nullptr, 'g',},
+    {"wafer-io",           no_argument,       nullptr, 'w',},
     {0, 0, 0, 0,},
 };
 
@@ -38,14 +41,14 @@ bool Band::increase_difficulty(int kind=-1) {
 
     switch(which) {
       case 0: { //add a fixed object
-        if(platforms() + 1 >ScenarioGen::max_platforms) break;
+        if(platforms() + 1 >ScenarioGen::max_platforms()) break;
         _n_fixed+=1; //one object per band
         recalculate_txrx();
         return true;
       }
       case 1: { //upgrade a fixed to a slow object
         if(_n_fixed - 1 < 0) break;
-        if(reflectors() +1 >= ScenarioGen::max_reflectors) break;
+        if(reflectors() +1 >= ScenarioGen::max_reflectors()) break;
         _n_fixed -= 1;
         _n_slow += 1;
         recalculate_txrx();
@@ -65,12 +68,12 @@ bool Band::increase_difficulty(int kind=-1) {
         return true;
       }
       case 4: { //avg_coef_per_obj
-        if(_avg_coef_per_object +1 > ScenarioGen::max_coef_per_obj) break;
+        if(_avg_coef_per_object +1 > ScenarioGen::max_coef_per_obj()) break;
         _avg_coef_per_object+=1;
         return true;
       }
       case 5: { //range
-        if(_range + 10 > ScenarioGen::max_range) break;
+        if(_range + 10 > ScenarioGen::max_range()) break;
         _range+=10;
         return true;
       }
@@ -81,24 +84,24 @@ bool Band::increase_difficulty(int kind=-1) {
 
   void Band::print_norm_csv() {
     printf("%0.3f, %0.3f, %0.3f, %0.3f, %0.3f, %0.3f", 
-        platforms() / (float) ScenarioGen::max_platforms, 
-        reflectors() / (float)ScenarioGen::max_platforms,
-        _n_fast / (float)ScenarioGen::max_platforms, 
+        platforms() / (float) ScenarioGen::max_platforms(), 
+        reflectors() / (float)ScenarioGen::max_platforms(),
+        _n_fast / (float)ScenarioGen::max_platforms(), 
         1.0/(float)_n_bands, 
-        _avg_coef_per_object / (float)ScenarioGen::max_coef_per_obj, 
-        _range / (float)ScenarioGen::max_range);
+        _avg_coef_per_object / (float)ScenarioGen::max_coef_per_obj(), 
+        _range / (float)ScenarioGen::max_range());
   }
 
 
 
 std::vector<float>& Band::normalized_vec() {
   if(_norm_features.size()==0) {
-    _norm_features.push_back(platforms() / (float)ScenarioGen::max_platforms);
-    _norm_features.push_back(reflectors() / (float)ScenarioGen::max_platforms);
+    _norm_features.push_back(platforms() / (float)ScenarioGen::max_platforms());
+    _norm_features.push_back(reflectors() / (float)ScenarioGen::max_platforms());
     _norm_features.push_back(1.0 / (float)_n_bands);
-    _norm_features.push_back(_avg_coef_per_object / (float)ScenarioGen::max_coef_per_obj);
-    _norm_features.push_back(_n_fast / (float)ScenarioGen::max_platforms);
-    _norm_features.push_back(_range / (float)ScenarioGen::max_range);
+    _norm_features.push_back(_avg_coef_per_object / (float)ScenarioGen::max_coef_per_obj());
+    _norm_features.push_back(_n_fast / (float)ScenarioGen::max_platforms());
+    _norm_features.push_back(_range / (float)ScenarioGen::max_range());
   }
   return _norm_features;
 }
@@ -362,7 +365,7 @@ std::vector<Band> top_k_pareto_scenarios(path_proc_unit* ppu, std::vector<Band>&
   //}
   //printf("num succ: %d \n", (int)successful_pareto_bands.size());
 
-  if(top_k_scenarios[0].reflectors() > ScenarioGen::max_platforms * .9) {
+  if(top_k_scenarios[0].reflectors() > ScenarioGen::max_platforms() * .9) {
     top_k_scenarios.resize(1);
   }
 
@@ -408,10 +411,16 @@ void evaluate_ppu(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer&
 
   for(auto & b : scene_vec) {
 
-    float ppus = b.ppus_per_band(*ppu,w,stats.total_failures);
-    int int_num_ppus = ceil(ppus);
+    float wafer_unconstrained_ppus = b.ppus_per_band(*ppu,w,stats.total_failures,verbose);
+    total_ppus += wafer_unconstrained_ppus;
 
-    total_ppus += int_num_ppus;
+    float links_per_wafer = b.calc_links_per_wafer(wafer_unconstrained_ppus,ppu,w,verbose);
+    float num_wafers = b.num_links() / links_per_wafer;
+
+    assert(num_wafers>0);
+
+    float wafer_constrained_ppus = num_wafers * w.num_units() * ppu->_ppus_per_chiplet;
+
 
     // For status purposes, I need to use algorithmic links to make a fair comparison
     // between channel models
@@ -419,12 +428,13 @@ void evaluate_ppu(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer&
     total_coef += b._n_obj * b._avg_coef_per_object * b.algorithmic_num_links();
     total_links += b.algorithmic_num_links();
 
-    float num_wafers = ppus / (w.num_units() * ppu->_ppus_per_chiplet);
 
     //printf("%d chiplets (PPU) are needed for this scenario\n", int_num_ppus);
-    b.num_chiplet += int_num_ppus;
-    b.num_ppu_chiplet = int_num_ppus;
+    b.num_chiplet    += wafer_constrained_ppus / ppu->_ppus_per_chiplet;
+    b.num_ppu_chiplet = wafer_constrained_ppus / ppu->_ppus_per_chiplet; //FIXME: Why two of these?
     //printf("after count the chiplet from PPU, there are %d chiplets\n", b.num_chiplet);
+
+
     int int_num_wafers = ceil(num_wafers);
     if(int_num_wafers<=num_wafers_target) total_in_target_wafer++;
     wafers += int_num_wafers;
@@ -448,15 +458,15 @@ path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafe
   float chiplet_area = w.chiplet_area();
   tech_params& t = *w._t;
 
-  bool seen_scatter_sep=false;
+  bool seen_aidp=false;
   // Preprocess scene vec to narrow params
   for(Band& b : scene_vec) {
-    seen_scatter_sep |= b._is_scatter_sep;
+    seen_aidp |= b._is_aidp;
   }
 
   int max_dielets_per_side=1;
-  if(seen_scatter_sep) {
-    max_dielets_per_side=5;
+  if(seen_aidp) {
+    max_dielets_per_side=2;
   } 
 
   for(int dielets_per_side = 1; dielets_per_side <= max_dielets_per_side; ++dielets_per_side) {
@@ -464,7 +474,7 @@ path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafe
     float ppu_area = chiplet_area / ppus_per_chiplet;
 
     // AggNet computaitons
-    for(int agg_network = 1; agg_network < 80; agg_network+=2) {
+    for(int agg_network = 1; agg_network < 80; agg_network+=8) {
       float side_length=sqrt((float)ppu_area);
       //for now, round down to 4.4 (round to nearst tenth mm), so that numbers match
       side_length = ((float)((int)(side_length*10)))/10.0;
@@ -481,14 +491,13 @@ path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafe
       for(int cpc = 20; cpc < 21; cpc+=5) { //FIXME: turn off for speed
 
 
-        for(int clutter_index = 10; clutter_index <= 100; clutter_index+=1) {
+        for(int clutter_index = 0; clutter_index <= 100; clutter_index+=10) {
           int clutter_ratio=clutter_index;
           if(clutter_index==0) {
             clutter_ratio=1;
           }
 
-
-          for(int mem_ratio =20; mem_ratio < 40; mem_ratio+=2) {
+          for(int mem_ratio =4; mem_ratio < 60; mem_ratio+=2) {
             path_proc_unit* ppu =new path_proc_unit(&t);
 
             ppu->_is_dyn_reconfig=dynamic_reconfig;
@@ -542,24 +551,34 @@ int main(int argc, char* argv[]) {
   bool print_pareto = false;
   bool dynamic_reconfig = false;
   bool verbose_ge_info = false;
-  bool scatter_sep = false;
+  bool aidp = false;
+  bool challenge_scenario=false;
+  int num_scenarios=1000;
+  bool limit_wafer_io=false;
   tech_params t;
 
   int opt;
-  while ((opt = getopt_long(argc, argv, "vgsdpr", long_options, nullptr)) != -1) {
+  while ((opt = getopt_long(argc, argv, "vgkdprcn:w", long_options, nullptr)) != -1) {
     switch (opt) {
       case 'd': direct_path=true; break;
-      case 's': scatter_sep=true; break;
+      case 'c': challenge_scenario=true; break;
+      case 'k': aidp=true; break;
       case 'r': dynamic_reconfig=true; break;
       case 'v': verbose = true; break;
       case 'g': verbose_ge_info = true; break;
       case 'p': print_pareto = true; break;
+      case 'n': num_scenarios = atoi(optarg); break;
+      case 'w': limit_wafer_io = true; break;
       default: exit(1);
     }
   }
 
   argc -= optind;
   argv += optind;
+
+  if(verbose) {
+    printf("Verbose Mode On\n");
+  }
 
   if (argc != 0) {
     cerr << "Usage: drbe_model_hpc [FLAGS]\n";
@@ -568,13 +587,14 @@ int main(int argc, char* argv[]) {
 
   cout << "Assuming ";
   if(direct_path) cout << "direct path";
-  else if(scatter_sep) cout << "scatter_sep";
+  else if(aidp) cout << "aidp";
   else cout << "tapped delay";
   cout << " channel model\n";
 
 
   std::vector<Band> scene_vec;
-  ScenarioGen::gen_scenarios(scene_vec,direct_path,scatter_sep);
+  ScenarioGen::gen_scenarios(scene_vec,direct_path,aidp,
+                             challenge_scenario, num_scenarios);
 
   // You can run different experiments by uncommenting different loops here ... we should make this
   // more configurable in the future. : )
@@ -585,17 +605,18 @@ int main(int argc, char* argv[]) {
 
 
   drbe_wafer w(&t,300,(float)ppu_area);
+  w.set_limit_wafer_io(limit_wafer_io);
 
   //float fast_update_period=10000;
   
   //for(fast_update_period = 1000; fast_update_period < 1000000; 
   //    fast_update_period*=1.2589254117941672104239541063958) {
   
-  for(float clutter_ratio = 0; clutter_ratio <= 100; clutter_ratio+=10) {
+  for(float frac_clutter = 0; frac_clutter <= 100; frac_clutter += 20) {
 
     for(auto& b : scene_vec) {
       //b._high_update_period=fast_update_period;
-      b._frac_clutter = clutter_ratio/100.0f;
+      b._frac_clutter = frac_clutter/100.0f;
     }
 
   //printf("\nTechnology Density Experiment: Increase the Density (factor \"v\" below)\n");
@@ -620,25 +641,37 @@ int main(int argc, char* argv[]) {
     PPUStats stats;
     int num_wafers_target=1;
 
+
     // clear the number of chiplet of each band from previous evaluation
     for(auto & b : scene_vec){
       b.num_chiplet = 0;
     }
 
-    evaluate_ppu(best_ppu,scene_vec,w,stats,num_wafers_target,false /*verbose*/);
+    evaluate_ppu(best_ppu,scene_vec,w,stats,num_wafers_target,verbose /*verbose*/);
 
     if(print_pareto) {
       top_k_pareto_scenarios(best_ppu,scene_vec,w,6,num_wafers_target);
     }
 
+    float average_clutter=0;
+    for(auto & b : scene_vec){
+      average_clutter+=b._frac_clutter;
+    }
+    average_clutter/=scene_vec.size();
+
+
+
     //printf("Fast Update Period: %0.0fus, ", fast_update_period/1000);
     
     //printf("v: %0.3f, ", v);
-    printf("%dmm^2 PPU (%0.2f), in-MB: %0.2f, clust: %d, flex_clust: %d, coef/clust %d, "\
+    
+    printf("avg_clut: %f, "\
+           "%dmm^2 PPU (%0.2f), in-MB: %0.2f, clust: %d, flex_clust: %d, coef/clust %d, "\
            "In: %d/%d Agg: %d/%d, Coef: %d/%d, Mem Ratio: %d, "\
            "ppus/die: %d, " \
            "Coef/mm2: %0.2f, links/cm2: %0.2f, "\
            "avg_waf: %0.2f, links/ppu: %0.2f, per_targ_waf: %0.1f, fail: %d\n",
+        average_clutter,
         ppu_area, 
         best_ppu->area(), 
         best_ppu->input_buf_area()*t.sram_Mb_per_mm2()/8,
