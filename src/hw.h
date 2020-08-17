@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iostream>
 #include <assert.h>
+#include <dsp.h>
 
 // Math Constants
 #define SCALAR_MACC_PER_COMPLEX_MACC (4)
@@ -36,6 +37,18 @@ private:
   float _int_macc_per_mm2=700;
   float _sram_Mb_per_mm2=8.1f;
 
+};
+
+class fedelity {
+public:
+  // in seconds, This withh change for each path, Use a higher order function call to change this parameter as you calculate diffrent paths
+  float UpdateRate_Fed = 1e-6; 
+  // 6th order polynomiyal estimates the position of the object
+  int InterpolationOrder_Fed = 6; 
+  // Upper bound estimated to be 3, still to be formally proved to be less than some number of NR - Interations
+  int Convergence_Fed = 3; 
+  // This is set to 1KHz as the average update rate from TA 1 for locations and properties of objects 
+  float TA1ScenarioUpdateRate_Fed = 1e-3; 
 };
 
 class hw_unit {
@@ -130,6 +143,77 @@ class ge_core : public hw_unit{
   virtual float area(){
     return comp_area() + mem_area();
   }
+
+  // -------------- NR Engine --------------
+  // Compute
+  float get_nrengine_comp(fedelity fed){
+    float IO = fed.InterpolationOrder_Fed;
+    float SU = fed.TA1ScenarioUpdateRate_Fed;
+    float TU = fed.UpdateRate_Fed;
+    float CF = fed.Convergence_Fed;
+    float C = 0.0;
+    // intial scenario extrapolation equation 6th order usually if 6 vaues are given
+    C = C + (3*IO*IO + IO + 2)*(TU/SU);
+    // Each cycle equation parameter update with t0 correction
+    C = C + 3*3*IO;
+    // NR_ iteration caluclations
+    C = C + ((3*2*IO) + ComputeTable(div_HF,Corl_C))*CF;
+    // Post Tn computaion of devived position velocity and acceleration
+    C = C + 3*6*IO;
+    // % THis calculation has to be done 2X per path
+    return 2 * C;
+  }
+  // Memory
+  float get_nrengine_mem(fedelity fed){
+    float IO = fed.InterpolationOrder_Fed;
+    float SU = fed.TA1ScenarioUpdateRate_Fed;
+    float TU = fed.UpdateRate_Fed;
+    float CF = fed.Convergence_Fed;
+    float M = 0.0;
+    // intial scenario extrapolation equation 6th order usually if 6 vaues are given
+    M = M + (2*IO + 3)*(TU/SU);
+    // NR_ iteration caluclations
+    M = M + 2*IO*CF;
+    // Post Tn computaion of devived position velocity and acceleration
+    M = M + 9;
+    // % THis calculation has to be done 2X per path
+    return 2 * C;
+  }
+  // Bandwidth
+  float get_nrengine_bw(fedelity fed){
+    float IO = fed.InterpolationOrder_Fed;
+    float SU = fed.TA1ScenarioUpdateRate_Fed;
+    float TU = fed.UpdateRate_Fed;
+    float CF = fed.Convergence_Fed;
+    // intial scenario extrapolation equation 6th order usually if 6 vaues are given
+    float B = 0.0;
+    B = B + IO*(TU/SU);
+    // % NR_ iteration caluclations
+    B = B + 2;
+    // % Post Tn computaion of devived position velocity and acceleration
+    B = B + 3*3*IO;
+    // % THis calculation has to be done 2X per path
+    return 2 * B;
+  }
+  // Latency
+  float get_nrengine_lat(fedelity fed){
+    float IO = fed.InterpolationOrder_Fed;
+    float SU = fed.TA1ScenarioUpdateRate_Fed;
+    float TU = fed.UpdateRate_Fed;
+    float CF = fed.Convergence_Fed;
+    // intial scenario extrapolation equation 6th order usually if 6 vaues are given
+    float L = 0.0;
+    L = L + ceil(log2(IO*(TU/SU)));
+    // % Each cycle equation parameter update with t0 correction
+    L = L + ceil(log2(IO));
+    // % NR_ iteration caluclations
+    L = L + CF*(ceil(log2(2*IO)) + ComputeTable(div_HF,Corl_L));
+    // % Post Tn computaion of devived position velocity and acceleration
+    L = L + ceil(log2(IO));
+    // % THis calculation has to be done 2X per path
+    return 2 * L;
+  }
+
 
   // Antenna Pattern Computation Overhead
 

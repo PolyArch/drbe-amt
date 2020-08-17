@@ -216,7 +216,7 @@ struct PPUStats {
 };
 
 void evaluate_ge(ge_core * ge, std::vector<Band>& scene_vec, drbe_wafer& w, 
-                ge_stats & stats){
+                ge_stats & stats, fedelity fed){
 
   
   float total_ge_comp_area = 0.0;
@@ -252,9 +252,13 @@ void evaluate_ge(ge_core * ge, std::vector<Band>& scene_vec, drbe_wafer& w,
   stats.avg_relative_motion_comp_area = stats.total_relative_motion_comp_area / scene_vec.size();
   stats.avg_path_gain_comp_area = stats.total_path_gain_comp_area / scene_vec.size();
   stats.avg_path_delay_comp_area = stats.total_path_delay_comp_area / scene_vec.size();
+  // Integrate with NR engine
+  total_ge_comp_area += (ge->get_nrengine_comp(fed) / w._t->_fp_macc_per_mm2);
   stats.avg_ge_comp_area = total_ge_comp_area / scene_vec.size();
   
   // Memory Resource
+  // Integrate with NR engine
+  total_mem_bytes = (ge->get_nrengine_mem(fed)) * 8; //Sihao: I believe 64-bit FP is 8 bytes
   stats.avg_mem_bytes = total_mem_bytes / scene_vec.size();
 
   // Statistic Aggregation
@@ -263,10 +267,10 @@ void evaluate_ge(ge_core * ge, std::vector<Band>& scene_vec, drbe_wafer& w,
 
 }
 
-ge_core * design_ge_core_for_scenario(std::vector<Band>& scene_vec, drbe_wafer& w, ge_stats & stats) {
+ge_core * design_ge_core_for_scenario(std::vector<Band>& scene_vec, drbe_wafer& w, ge_stats & stats, fedelity fed) {
   ge_core* ge = new ge_core(&*w._t); //needs to be null so we don't delete a non-pointer
 
-  evaluate_ge(ge, scene_vec, w, stats);
+  evaluate_ge(ge, scene_vec, w, stats, fed);
 
   // After evaluation, assign the average computation area as computation resource of GE
   ge->relative_location_comp_area = stats.avg_relative_location_comp_area;
@@ -716,8 +720,9 @@ int main(int argc, char* argv[]) {
 
   // Design the GE core
   //drbe_wafer w(&t,300,(float)20);
+  fedelity fed;
   ge_stats ge_core_stats;
-  ge_core * ge = design_ge_core_for_scenario(scene_vec, w, ge_core_stats);
+  ge_core * ge = design_ge_core_for_scenario(scene_vec, w, ge_core_stats, fed);
   printf("Chiplet Needed by GE Histogram: ");
   ge_core_stats.print_chiplet_histo();
   
