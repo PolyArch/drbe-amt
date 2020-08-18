@@ -953,7 +953,7 @@ int main(int argc, char* argv[]) {
   // -------------------------- Design the GE core ---------------------------
 
   // Define the Fidelity
-  for(auto b : scene_vec){
+  for(auto & b : scene_vec){
     // Global
     b.ge_stat.global_fid.upd_rate = w._t->ge_freq();
     b.ge_stat.global_fid.num_obj = b._n_obj;
@@ -980,6 +980,51 @@ int main(int argc, char* argv[]) {
   // ------- Design the Geometry Engine ------
   ge_core * ge = design_ge_core_for_scenario(scene_vec, w);
 
+  // Print out all tradeoff of all scenario
+  std::ofstream ge_tradeoff;
+  ge_tradeoff.open("ge_tradeoff.csv");
+  printf("Start to write GE tradeoff to `ge_tradeoff.csv`\n");
+  for(auto & b : scene_vec){
+    ge_tradeoff << b.ge_stat.global_fid.upd_rate << ", "
+                << b.ge_stat.global_fid.num_obj << ", "
+                << b.ge_stat.global_fid.num_path << ", "
+                // Coordinate
+                << b.ge_stat.coordinate_trans.compute << ", "
+                << b.ge_stat.coordinate_trans.memory << ", "
+                << b.ge_stat.coordinate_trans.bandwidth << ", "
+                << b.ge_stat.coordinate_trans.latency << ", "
+                // NR Engine
+                << b.ge_stat.nr_engine.compute << ", "
+                << b.ge_stat.nr_engine.memory << ", "
+                << b.ge_stat.nr_engine.bandwidth << ", "
+                << b.ge_stat.nr_engine.latency << ", "
+                // Relative Orientation
+                << b.ge_stat.relative_orientation.compute << ", "
+                << b.ge_stat.relative_orientation.memory << ", "
+                << b.ge_stat.relative_orientation.bandwidth << ", "
+                << b.ge_stat.relative_orientation.latency << ", "
+                // Antenna
+                << b.ge_stat.antenna_gain.compute << ", "
+                << b.ge_stat.antenna_gain.memory << ", "
+                << b.ge_stat.antenna_gain.bandwidth << ", "
+                << b.ge_stat.antenna_gain.latency << ", "
+                // Path gain and velocity
+                << b.ge_stat.path_velocity.compute << ", "
+                << b.ge_stat.path_velocity.memory << ", "
+                << b.ge_stat.path_velocity.bandwidth << ", "
+                << b.ge_stat.path_velocity.latency << ", "
+                // RCS
+                << b.ge_stat.rcs.compute << ", "
+                << b.ge_stat.rcs.memory << ", "
+                << b.ge_stat.rcs.bandwidth << ", "
+                << b.ge_stat.rcs.latency << ", "  
+                // Tu
+                << b.ge_stat.tu.compute << ", "
+                << b.ge_stat.tu.memory << ", "
+                << b.ge_stat.tu.bandwidth << ", "
+                << b.ge_stat.tu.latency << "\n";
+  }
+  ge_tradeoff.close();
   // ------- PPU vs. GE DSE ------
 
   // ------- PPU vs. GE + GM DSE ------
