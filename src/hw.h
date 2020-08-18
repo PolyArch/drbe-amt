@@ -3,7 +3,6 @@
 #include <fstream>
 #include <iostream>
 #include <assert.h>
-#include <dsp.h>
 
 // Math Constants
 #define SCALAR_MACC_PER_COMPLEX_MACC (4)
@@ -19,6 +18,9 @@ public:
   float sram_Mb_per_mm2() {return _area_multiplier * _sram_Mb_per_mm2;}
   float router_constant() {return _area_multiplier * _router_constant;}
   float mtr_per_mm2() {return _area_multiplier * 24000000;}
+  float ge_comp_density(){return _area_multiplier * _ge_comp_density;}
+  float ge_dram_MB(){return _area_multiplier * _ge_dram_MB_per_mm2;}
+  float ge_freq(){return _ge_clock_rate;}
 
   //These are from uneeb's calculations
   //2.56 Tb/s per side, if each side is 4.4mm
@@ -26,29 +28,17 @@ public:
   float _chiplet_io_bits_per_mm2=2.56/4.4*1024*2;
   float _router_constant=1.2244e-7; // area of a 1-bit, 1input, 1output router in mm^2
 
-  // GE Params:
-  float _dram_Mb_per_mm2=140.288; //0.137 Gb/mm2 -> 140.288 Mb / mm2
-  float _dram_frequency = 1e9;// DRAM frequency is 2GHz
-  float _flops_per_mm2_per_cycle = 9.8 * 2 / 1.25 / 0.68; // Ara 1.25 GHz, 9.8 DP-GFLOPS, Area = 0.68 mm2
-
 private:
   float _area_multiplier=1.0;
   float _fp_macc_per_mm2=400; //?
   float _int_macc_per_mm2=700;
   float _sram_Mb_per_mm2=8.1f;
+  
+  // GE Params:
+  float _ge_dram_MB_per_mm2 = 276; //MegaBytes per mm^2
+  float _ge_clock_rate = 2e9;// Clock of the Geometry Engine is 2GHz
+  float _ge_comp_density = 200; // 64 bit FP MACs per mm^2
 
-};
-
-class fedelity {
-public:
-  // in seconds, This withh change for each path, Use a higher order function call to change this parameter as you calculate diffrent paths
-  float UpdateRate_Fed = 1e-6; 
-  // 6th order polynomiyal estimates the position of the object
-  int InterpolationOrder_Fed = 6; 
-  // Upper bound estimated to be 3, still to be formally proved to be less than some number of NR - Interations
-  int Convergence_Fed = 3; 
-  // This is set to 1KHz as the average update rate from TA 1 for locations and properties of objects 
-  float TA1ScenarioUpdateRate_Fed = 1e-3; 
 };
 
 class hw_unit {
@@ -105,227 +95,7 @@ class ge_core : public hw_unit{
   ge_core(tech_params * t) : hw_unit(t){
     tech = t;
   }
-
-  void set_relative_location_comp_area(float area){
-    relative_location_comp_area = area;
-  }
-  
-  void set_affine_transform_comp_area(float area){
-    affine_transform_comp_area = area;
-  }
-
-  void set_relative_motion_comp_area(float area){
-    relative_motion_comp_area = area;
-  }
-
-  void set_path_gain_comp_area(float area){
-    path_gain_comp_area = area;
-  }
-
-  void set_path_delay_comp_area(float area){
-    path_delay_comp_area = area;
-  }
-
-  float comp_area(){
-    total_comp_area = 
-      relative_location_comp_area 
-      + affine_transform_comp_area
-      + relative_motion_comp_area 
-      + path_gain_comp_area 
-      + path_delay_comp_area;
-    return total_comp_area;
-  }
-
-  float mem_area(){
-    return mem_byte;
-  }
-
-  virtual float area(){
-    return comp_area() + mem_area();
-  }
-
-  // -------------- NR Engine --------------
-  // Compute
-  float get_nrengine_comp(fedelity fed){
-    float IO = fed.InterpolationOrder_Fed;
-    float SU = fed.TA1ScenarioUpdateRate_Fed;
-    float TU = fed.UpdateRate_Fed;
-    float CF = fed.Convergence_Fed;
-    float C = 0.0;
-    // intial scenario extrapolation equation 6th order usually if 6 vaues are given
-    C = C + (3*IO*IO + IO + 2)*(TU/SU);
-    // Each cycle equation parameter update with t0 correction
-    C = C + 3*3*IO;
-    // NR_ iteration caluclations
-    C = C + ((3*2*IO) + ComputeTable(div_HF,Corl_C))*CF;
-    // Post Tn computaion of devived position velocity and acceleration
-    C = C + 3*6*IO;
-    // % THis calculation has to be done 2X per path
-    return 2 * C;
-  }
-  // Memory
-  float get_nrengine_mem(fedelity fed){
-    float IO = fed.InterpolationOrder_Fed;
-    float SU = fed.TA1ScenarioUpdateRate_Fed;
-    float TU = fed.UpdateRate_Fed;
-    float CF = fed.Convergence_Fed;
-    float M = 0.0;
-    // intial scenario extrapolation equation 6th order usually if 6 vaues are given
-    M = M + (2*IO + 3)*(TU/SU);
-    // NR_ iteration caluclations
-    M = M + 2*IO*CF;
-    // Post Tn computaion of devived position velocity and acceleration
-    M = M + 9;
-    // % THis calculation has to be done 2X per path
-    return 2 * C;
-  }
-  // Bandwidth
-  float get_nrengine_bw(fedelity fed){
-    float IO = fed.InterpolationOrder_Fed;
-    float SU = fed.TA1ScenarioUpdateRate_Fed;
-    float TU = fed.UpdateRate_Fed;
-    float CF = fed.Convergence_Fed;
-    // intial scenario extrapolation equation 6th order usually if 6 vaues are given
-    float B = 0.0;
-    B = B + IO*(TU/SU);
-    // % NR_ iteration caluclations
-    B = B + 2;
-    // % Post Tn computaion of devived position velocity and acceleration
-    B = B + 3*3*IO;
-    // % THis calculation has to be done 2X per path
-    return 2 * B;
-  }
-  // Latency
-  float get_nrengine_lat(fedelity fed){
-    float IO = fed.InterpolationOrder_Fed;
-    float SU = fed.TA1ScenarioUpdateRate_Fed;
-    float TU = fed.UpdateRate_Fed;
-    float CF = fed.Convergence_Fed;
-    // intial scenario extrapolation equation 6th order usually if 6 vaues are given
-    float L = 0.0;
-    L = L + ceil(log2(IO*(TU/SU)));
-    // % Each cycle equation parameter update with t0 correction
-    L = L + ceil(log2(IO));
-    // % NR_ iteration caluclations
-    L = L + CF*(ceil(log2(2*IO)) + ComputeTable(div_HF,Corl_L));
-    // % Post Tn computaion of devived position velocity and acceleration
-    L = L + ceil(log2(IO));
-    // % THis calculation has to be done 2X per path
-    return 2 * L;
-  }
-
-
-  // Antenna Pattern Computation Overhead
-
-  float get_4th_antenna_pattern_ops(){
-    int mode = 3;
-    switch(mode){
-      case 0: 
-        // direct computation
-        return (K * 2) * log2(K) + 8 * K + N + X * K;
-      case 1: 
-        //Single angle computation
-        return A*(8 + 2*G*N) + N + X*A;
-      case 2: 
-        // Entirely stored patterns
-        return Y*K;
-      case 3: 
-        // Stored windows - whole pattern computation
-        return (K*2)*log2(K) + 8*K + N + Y*N;
-      case 4: 
-        // Stored windows - single angle computation
-        return A*(8 + 2*G*N) + N + Y*N;
-      default: 
-        return -1.0;
-    };
-  }
-
-  float get_5th_antenna_pattern_ops(){
-    float ops = 0.0;
-
-    // For now, we treat all operations the same.
-
-    // NN index mapping
-    ops += (540 + 540 + 536);
-    // Y index calculation
-    ops += (2 + 4);
-    // Read indeices from X
-    ops += 3;
-    // Gain Calculation
-    ops += (3 + 2);
-    return ops;
-  }
-
-  // Memory Overhead
-
-  float get_4th_antenna_pattern_mem(){ // return in Byte
-    int mode = 3;
-    switch(mode){
-      case 0: 
-        // direct computation
-        return 4*K + 2*N;
-      case 1: 
-        //Single angle computation
-        return 4*A + 2*N;
-      case 2: 
-        // Entirely stored patterns
-        return 2*K;
-      case 3: 
-        // Stored windows - whole pattern computation
-        return 4*K + 2*N;
-      case 4: 
-        // Stored windows - single angle computation
-        return 4*A + 2*N;
-      default: 
-        return -1.0;
-    };
-  }
-
-  float get_5th_antenna_pattern_mem(){// Return in Byte
-    return 8.82 * 1e6 * 2;
-  }
-  
-
-  // Anttena Pattern
-  int cos_approx_order = 8;       // Number of Taylor approximation terms for cosines
-  int exp_approx_order = 16;      // Number of Taylor approximation terms for complex exponentials
-
-  int N = 256; // Number of antennas
-  int K = 720; // Number of angular bins
-  int A = 100; // Number of angles of interest
-
-  int B = K/2;                    // Number of supported beamwidths
-  int C = K;                      // Number of supported beam angles
-  int S = N;                      // Number of antenna sizes
-  int D = 4;                      // Number of supported window functions
-
-  // Number of OPS for a cosine approx
-  int cos_ops = 2*cos_approx_order + cos_approx_order * cos_approx_order;
-  int X = 2*cos_ops + 4;          // OPS for the window function generation (Blackman)
-  // Number of OPS for a complex exponential approx
-  float G = (exp_approx_order + 2)*(exp_approx_order - 1)/2 + exp_approx_order;
-  int Y = 1;                      // OPS to retrieve from nonvolatile memory (per float)
-
-  int cos_lat = cos_approx_order + 2;               // cosine latency
-  int X_lat = cos_lat + 1;        // window function latency
-  int fft_lat = log2(N);          // FFT latency
-  int mac_lat = 1;                // MAC latency
-  int g_lat = 4;                  // complex exponential latency
-  int disk_lat = 1;               // disk retrieval latency
-
-  // ----------- Resource ------------ 
-
-  // Compute
-  float relative_location_comp_area = 0.0;
-  float affine_transform_comp_area = 0.0;
-  float relative_motion_comp_area = 0.0;
-  float path_gain_comp_area = 0.0;
-  float path_delay_comp_area = 0.0;
-  float total_comp_area = 0.0;
-
-  // Capacity
-  float mem_byte = 0.0; // in byte
-
+  virtual float area(){};
   // ----------- Area ----------- 
 
   tech_params * tech;

@@ -8,44 +8,81 @@
 #include <iostream>
 #include <string>
 #include <algorithm>
-
+#include <dsp.h>
 #include "hw.h"
 #include "util.h"
 
-struct ge_stats {
-  // Computation Area breakdown
-  float avg_relative_location_comp_area = 0.0;
-  float avg_affine_transform_comp_area = 0.0;
-  float avg_relative_motion_comp_area = 0.0;
-  float avg_path_gain_comp_area = 0.0;
-  float avg_path_delay_comp_area = 0.0;
-  float avg_ge_comp_area = 0.0;
-  // Total Computation Area breakdown
-  float total_relative_location_comp_area = 0.0;
-  float total_affine_transform_comp_area = 0.0;
-  float total_relative_motion_comp_area = 0.0;
-  float total_path_gain_comp_area = 0.0;
-  float total_path_delay_comp_area = 0.0;
-  float total_ge_comp_area = 0.0;
-  // Count
-  int num_ge_core = -1;
-  // Total Memory Capacity
-  float total_mem_bytes = 0.0;
-  float avg_mem_bytes = 0.0;
-  // histogram
-  int chiplet_histo[100000];
-  int ge_core_histo[100000];
-  void print_chiplet_histo() {
-    for(int i = 1; i < 400; ++i) {
-      printf("%d ",chiplet_histo[i]);
-    }
-  }
-  void print_ge_core_histo() {
-    for(int i = 1; i < 400; ++i) {
-      printf("%d ",ge_core_histo[i]);
-    }
+// compute, memory, bandwidth, latency
+struct cmbl{
+  float compute = 0.0; // unit: MAC -> compute * 1e-9 to get Gig MACs
+  float memory = 0.0; // unit: 64-bit -> memory * (64*1e-6/8) to get Mega Bytes
+  float bandwidth = 0.0; // unit: 64-bit -> bandwidth * ( (64*1e-9) / 8 ) to get Gig Byte per second
+  float latency = 0.0; // clock cycles
+  void set_cmbl(float c, float m, float b, float l){
+    compute = c;
+    memory = m;
+    bandwidth = b;
+    latency = l;
   }
 };
+
+// Global Fidelity
+struct st_global_fid {
+  float num_path = 0.0;
+  float num_obj = 0.0;
+  float upd_rate = 0.0;
+};
+
+// Coordinate transformation
+// Geodetic to Cartesian Tradeoff Space Analysis 
+struct st_coordinate_trans : cmbl {
+  float ta1_scene_upd_rate = 0.0;
+};
+
+// NR engine
+struct st_nr_engine : cmbl {
+  float interpolation_ord = 0.0;
+  float conv_fed = 0.0;
+};
+
+// Relative Orientation
+struct st_relative_orientation : cmbl{};
+
+// Antenna Gain
+struct st_antenna_gain : cmbl{
+  float order = 0.0;
+  float num_antenna = 0.0;
+  float res_angle = 0.0;
+  float dict_dim = 0.0;
+};
+
+// Path Gain and Velocity
+struct st_path_velocity : cmbl {};
+
+// RCS
+struct st_rcs : cmbl{
+  float order = 0.0;
+  float points = 0.0;
+  float angle = 0.0;
+  float freq = 0.0;
+  float plzn = 0.0;
+  float samples = 0.0;
+};
+
+struct st_tu : cmbl {};
+
+struct single_band_ge_stats {
+  st_global_fid global_fid;
+  st_coordinate_trans coordinate_trans;
+  st_nr_engine nr_engine;
+  st_relative_orientation relative_orientation;
+  st_antenna_gain antenna_gain;
+  st_path_velocity path_velocity;
+  st_rcs rcs;
+  st_tu tu;
+};
+
+
 
 
 //Note for later: Sumeet says that if either tx or rx is fast, then we need variable doppler
@@ -468,12 +505,18 @@ class Band {
     return total_links;
   }
 
+
+
   int platforms() {
     return _n_slow + _n_fast + _n_fixed;
   }
 
   int reflectors() {
     return _n_obj;
+  }
+
+  int num_paths(){
+    return _n_tx * _n_rx * reflectors();
   }
 
   bool could_be_harder_than(Band& other) {
@@ -489,8 +532,7 @@ class Band {
   bool increase_difficulty(int kind);
   float normalized_distance_to(Band& other);
   std::vector<float>& normalized_vec();
-  float ge_mem_byte(ge_core & ge, ge_stats & stats);
-  float ge_comp_area(ge_core & ge, ge_stats & stats);
+
 
   void print_csv() {
     printf("%d, %d, %d, %d, %d, %d", platforms(), reflectors(),
@@ -510,6 +552,24 @@ class Band {
       _n_obj = _n_slow + _n_fast;
       _n_full_range_obj = _n_fast;
   }
+
+  // ---------------- Geometry Engine -----------------
+  // Coordinate Translation
+  void coordinate_trans_cmbl(single_band_ge_stats & fed_cmbl);
+  // NR Engine
+  void nr_engine_cmbl(single_band_ge_stats & fed_cmbl);
+  // Relative Orientation
+  void relative_orientation_cmbl(single_band_ge_stats & fed_cmbl);
+  // Antenna Gain
+  void antenna_gain_cmbl(single_band_ge_stats & fed_cmbl);
+  // Path Gain and Velocity
+  void path_gain_cmbl(single_band_ge_stats & fed_cmbl);
+  // RCS
+  void rcs_cmbl(single_band_ge_stats & fed_cmbl);
+  // Update Time
+  void tu_cmbl(single_band_ge_stats & fed_cmbl);
+  // All
+  void get_ge_cmbl(single_band_ge_stats & fed_cmbl);
 
   bool _is_direct_path=false;
   bool _is_aidp=false;
@@ -539,20 +599,10 @@ class Band {
   int num_chiplet = 0;
   int num_ppu_chiplet = 0;
   int num_ge_chiplet = 0;
-  float ge_area = 0.0;
   float _frac_clutter = 0.0;
 
-  // Geometry Engine Resource 
-  float antenna_0th_comp = 0.0; // in 
-  float antenna_4th_comp = 0.0;
-  float antenna_5th_comp = 0.0;
-
-  float antenna_0th_mem = 0.0;
-  float antenna_4th_mem = 0.0;
-  float antenna_5th_mem = 0.0;
-
-  // Memory
-  float mem_byte = 0.0; //in mm2
+  // Geometry Engine Tradeoff
+  single_band_ge_stats ge_stat;
 
   std::vector<float> _norm_features;
 };

@@ -1,6 +1,4 @@
 #include "drbe.h"
-
-
 using namespace std;
 
 static struct option long_options[] = {
@@ -106,84 +104,371 @@ std::vector<float>& Band::normalized_vec() {
   return _norm_features;
 }
 
-float Band::ge_comp_area(ge_core & ge, ge_stats & stats){
-  // Considering Geometry Engine
-  float frac_slow  = (float)(_n_slow)/((float)_n_obj);
-  float frac_fast  = (float)(_n_fast)/((float)_n_obj);
-  //printf("frac_slow = %f, frac_fast = %f\n", frac_slow, frac_fast);
-  //printf("low update period = %f, high update period = %f\n",_low_update_period,_high_update_period );
-  // Relative Location Calculation
-  int fast_relative_loc_flop = 3 * (_n_tx * _n_fast + _n_fast * _n_rx + _n_tx * _n_rx);
-  int slow_relative_loc_flop = 3 * (_n_tx * _n_slow + _n_slow * _n_rx + _n_tx * _n_rx);
-  // Affine Transformation
-  int affine_transform_flop = 25 * _n_obj;
-  // Relative Motion
-  int fast_relative_mot_flop = 3 * (_n_tx * _n_fast + _n_fast * _n_rx + _n_tx * _n_rx);
-  int slow_relative_mot_flop = 3 * (_n_tx * _n_slow + _n_slow * _n_rx + _n_tx * _n_rx);
-  // Path Gain/Loss 
-  double antenna_0th_comp_flops = rand_rng(20, 2581) * num_links();
-  double antenna_4th_comp_flops = ge.get_4th_antenna_pattern_ops() * num_links();
-  double antenna_5th_comp_flops = ge.get_5th_antenna_pattern_ops() * num_links();
-  //double num_update_per_second = 1e9 * ((float)frac_slow / (float)_low_update_period + (float)frac_fast / (float)_high_update_period);
-  //printf("num_update_per_second = %f\n", num_update_per_second);
-  //printf("# updates per second = %0.9f\n", num_update_per_second);
-  //printf("%f, %f, %f, %f\n", antenna_0th_comp_flops, antenna_4th_comp_flops, antenna_5th_comp_flops, num_update_per_second);
-  antenna_0th_comp = antenna_0th_comp_flops* ((float)frac_slow / (float)_low_update_period + (float)frac_fast / (float)_high_update_period);// * num_update_per_second;
-  antenna_4th_comp = antenna_4th_comp_flops* ((float)frac_slow / (float)_low_update_period + (float)frac_fast / (float)_high_update_period);// * num_update_per_second;
-  antenna_5th_comp = antenna_5th_comp_flops* ((float)frac_slow / (float)_low_update_period + (float)frac_fast / (float)_high_update_period);// * num_update_per_second;
-  double path_gain_flop = antenna_0th_comp + antenna_4th_comp + antenna_5th_comp;
-                      ;//ge.get_antenna_pattern_ops() * num_links();//rand_rng(20, 2581) * num_links();
+  // ---------------- Geometry Engine -----------------
+  // Coordinate Translation
+  void Band::coordinate_trans_cmbl(single_band_ge_stats & fed_cmbl){
+    float NO = fed_cmbl.global_fid.num_obj;
+    float SU = fed_cmbl.coordinate_trans.ta1_scene_upd_rate;
+    float C = NO*(13 + ComputeTable(Cos,Corl_C)+
+                      ComputeTable(Sin,Corl_C)+
+                     ComputeTable(Sqrt,Corl_C) +
+                     ComputeTable(Div,Corl_C))/SU; // Compute - in terms of 64bit FP MACs
+    float M = 2+3*NO; // Memory in terms of 64 bit FP Units(reused varable?)
+                      //considering reused varable
+                      //M= 2+6*NO
+    float B = 3*NO/SU; // Memory Bandwidth in terms of 64bit FP I/O operations required
+    float L = 0; // Latency in terms of number of clock cycles required for this step
+    fed_cmbl.coordinate_trans.set_cmbl(C, M, B, L);
+  }
+  // NR Engine
+  void Band::nr_engine_cmbl(single_band_ge_stats & fed_cmbl){
+    // Given Fidelites (Change these according to your blocks inputs)
+    float IO = fed_cmbl.nr_engine.interpolation_ord;
+    float SU = fed_cmbl.coordinate_trans.ta1_scene_upd_rate;
+    float TU = fed_cmbl.global_fid.upd_rate;
+    float CF = fed_cmbl.nr_engine.conv_fed;
+    float NP = fed_cmbl.global_fid.num_path;
+    float NO = fed_cmbl.global_fid.num_obj;
+    // compute table comtains the equivilent MAC operational values of the
+    // Sine/exponent/division functions etc.
+    // For this block we need Division which is located at ComputeTable('div_HF','C')
+    
+    float C = 0; // Compute - in terms of 64bit FP MACs
+    float M = 0; // Memory in terms of 64 bit FP Units
+    float B = 0; // Memory Bandwidth in terms of 64bit FP I/O operations required
+    float L = 0; // Latency in terms of number of clock cycles required for this step
+
+    // intial scenario extrapolation equation 6th order usually if 6 vaues
+    // are given
+    C = C + (3*IO*IO + IO + 2)*(1/SU)*NO;
+    M = M + (2*IO + 3)*(1/SU)*NO;
+    B = B + IO*(1/SU)*NO;
+    L = L + ceil(log2(IO*(1/SU)));
+    // Each cycle equation parameter update with t0 correction
+    C = C + (3*3*IO)*NP*(1/TU);
+    L = L + ceil(log2(IO));
+    // NR_ iteration caluclations
+    C = C + ((3*2*IO) + ComputeTable(Div_HF,Corl_C))*CF*NP*(1/TU);
+    M = M + 2*IO*CF*NP;
+    L = L + CF*(ceil(log2(2*IO)) + ComputeTable(Div_HF,Corl_L));
+    B = B + 2*NP*(1/TU);
+    // Post Tn computaion of devived position velocity and acceleration
+    C = C + 3*6*IO*NP*(1/TU);
+    M = M + 9*NP;
+    B = B + 3*3*IO*NP*(1/TU);
+    L = L + ceil(log2(IO));
+    
+    // THis calculation has to be done 2X per path
+    C = 2*C;
+    M = 2*M;
+    B = 2*B;
+    L = 2*L;
+    fed_cmbl.nr_engine.set_cmbl(C, M, B, L);
+  }
+  // Relative Orientation
+  void Band::relative_orientation_cmbl(single_band_ge_stats & fed_cmbl){
+    //NO = NumberofObjects; // don"t think this is correct should be paths
+    float NO = fed_cmbl.global_fid.num_obj;
+    float TU = fed_cmbl.global_fid.upd_rate;
+    
+    //transformation matrix composition 4x4x4 =64
+    //each coordinate transformation 4x4=16  
+    //incident and radiating angle calculation ?(under development)    
+    //velocity transformation matrix 3*3=9
+    //velocity transformation 4*4
+    //acceleration similar 9+16=25
+    
+    //theta phi calculaiton x2
+    //relative pos 3
+    //theta= arctan(y/x)  arctan+div
+    //phi  2+sqrt+div+arctan
+    float C1 = (64+16+25*2+2*(3+2+2*ComputeTable(Div,Corl_C)+
+        2*ComputeTable(Sqrt,Corl_L)+
+        2*ComputeTable(Arctan,Corl_C)));
+    float C = NO*C1/TU; // Compute - in terms of 64bit FP MACs
+    
+    
+    //input orientation 3*3=9
+    //relative orientation 3*3 = 9
+    //Position, Velocities and Accelerations in&out      9*2=18
+    //output angles 4
+    
+    //M = NO*(40); // Memory in terms of 64 bit FP Units
+    float M = 0; // dont think you need to store the rest of the data that star thinks needs to be stored
+
+    
+    //B = NO*(40)/TU; // Memory Bandwidth in terms of 64bit FP I/O operations required
+    float B = NO*(9+18)/TU; // input orientation and output andgeles dont need to be accesed
+    
+    
+    float L = 0; // Latency in terms of number of clock cycles required for this step
+    L = ceil(log2(C1));
+    fed_cmbl.relative_orientation.set_cmbl(C, M, B, L);
+  }
+  // Antenna Gain
+  void Band::antenna_gain_cmbl(single_band_ge_stats & fed_cmbl){
+    float no_antenna=fed_cmbl.antenna_gain.num_antenna;
+    float o=fed_cmbl.antenna_gain.order;
+    float Tu=fed_cmbl.global_fid.upd_rate;
+    float K=fed_cmbl.antenna_gain.res_angle;
+    float no_paths=fed_cmbl.global_fid.num_path;
+    float no_Tx=_n_tx;
+    float no_Rx=_n_rx;
+    float dict_size=fed_cmbl.antenna_gain.dict_dim;
+    
+    float C=0; //Compute in 64-bit MAC
+    float M=0; //Memory in terms of 64 bit FP Units
+    float B=0; //Memory Bandwidth in terms of 64bit FP I/O operations required
+    float L=0; //Latency in terms of number of clock cycles required for this step
+    
+    if(o==0){
+        C=0;
+        M=M+1;
+        B=B+(no_paths*2/Tu); //getting gain value per update time
+        L=20; //not sure about latency
+    }else if(o==1){
+        C=0;
+        M=M+(no_Tx + no_Rx); //gains for each antenna
+        B=B+((no_paths*2)/Tu); // getting each antenna's gain per update time
+        L=20;
+    }else if(o==2){
+        C=C+2*(8)+1;
+        C=no_paths*(C/Tu);
+        M=M+(5*(no_Tx + no_Rx)+1);
+        B=B+((5*(no_paths*2)+1)/Tu); //getting each antenna's gains and beamwidths per update time
+        L=21;
+    }else if(0==3){
+        C=C+2*(8)+1;
+        C=no_paths*(C/Tu);
+        M=M+(6*(no_Tx + no_Rx));
+        B=B+((6*(no_paths*2))/Tu); //getting each antenna's gains and beamwidths per update time
+        L=21;
+    }else if(o==4){
+        K=pow(2, (ceil(log2(180/K))));
+        C=C+2*(8)+1; //to get 2nd/3rd order gains
+        float C1=K*(2*ComputeTable(Cos,Corl_C)+3)+no_antenna+(no_antenna/2)*log2(no_antenna)+no_antenna+K+(K/2)*log2(K)+2*K;
+        C=C+C1;
+        C=2*C+1;
+        C=no_paths*(C/Tu);
+        M=M+(6*(no_Tx + no_Rx))+(no_Tx + no_Rx)*(4*K+2*no_antenna); //(2K+N)2 (bytes to bits)
+        B=B+((6*(no_paths*2))/Tu)+(4*K+2*no_antenna)*no_paths/Tu;
+        L=21+ceil(log2(C1));
+    }else if(o==5){
+        float N=(180/K)*(90/K)*(90/K);
+        float n=(180/K);
+        M=(no_Tx + no_Rx)*(n*dict_size+dict_size*N);
+        C=C+1620+dict_size; //assuming 540 MACs for absolute value calc
+        C=no_paths*(C/Tu);
+        B=B+((dict_size*2)*(no_paths*2)/Tu); //getting 3 numbers from memory per update time;
+        L=20+ceil(log2(1620))+ceil(log2(dict_size));
+    }
+
+    fed_cmbl.antenna_gain.set_cmbl(C, M, B, L);
+  }
+  // Path Gain and Velocity
+  void Band::path_gain_cmbl(single_band_ge_stats & fed_cmbl){
+    // Given Fidelites (Change these according to your blocks inputs)
+    float SU = fed_cmbl.coordinate_trans.ta1_scene_upd_rate;
+    float TU = fed_cmbl.global_fid.upd_rate;
+    float NF = num_paths() * 2;
+    
+    // compute table comtains the equivilent MAC operational values of the
+    // Sine/exponent/division functions etc.
+    // For this block we need Division which is located at ComputeTable('div_HF','C')
+    
+    float C = 0; // Compute - in terms of 64bit FP MACs
+    float M = 0; // Memory in terms of 64 bit FP Units
+    float B = 0; // Memory Bandwidth in terms of 64bit FP I/O operations required
+    float L = 0; // Latency in terms of number of clock cycles required for this step
+
+// ------ Path distance compuation ------
+//     Path_distance is used to calculate the coefficients of fractional delay filter, path gain.
+//     The path_distance at each scinero update is calculated with equation below
+//     relative_location = {(x1-x2), (y1-y2), (z1-z2)};
+//     Path_distance = ((x1-x2)^2 + (y1-y2)^2 +(z1-z2)^2)^0.5
+//     The path_distance at each update is calculated by first update the relative_location with relative_location increment,
+//     then do the distance calcualtion with new relative_location
+//     relative_location = relative_location + relative_location_increment;
+//     relative_location_increment = v * t + 1/2 * a * t^2;
+//     v: path velocity, the detailed equation is givien in the next section.
+//     a: path accelelation, the detailed euqation is given in the next section. 
+//     t: the time interval between two updates.
+    C = C + (3 / TU) + 1 / TU + (3 / TU) + ComputeTable(Sqrt,Corl_C); // 5 * TU to get the relative_location at each update(including scenarioUpdate),  3 to get sum of square, 
+    // 1 at updating rate for the distance increment, we get new v at each update, yet the a get updated only at scenario update.
+    M = M + 3; // 3 to store relative_location.
+    B = B + 6; // Bandwidth to transmit 2 set of coordinates
+    L = L + 2 + ComputeTable(Sqrt,Corl_L); // 1 for relative_location update, 1 for sum of squares, 1 for square root 
+//% End of the path distance compuation
+
+
+    //% Path veloctiy compuation
+    //     Path_velocity is calculated by first calculate the path velocity between two object at each scienro update
+    //     second we calculate the path acceleration at scienro update.
+    //     Relative_velocity = {v1_x - v2_x, v1_y - v2_y, v1_z - v2_z};
+    //     Relative_acceleration = t * {a1_x - a2_x, a1_y - a2_y, a1_z - a2_z};
+    //     path_velocity = sqrt(relative_velocity.^2);
+    //     the relative speed at each update is calculated with equation below
+    //     relative_velocity = relative_velocity + relative acceleration
+    //     t: the time interval between two updates
+    C = C + 6 / SU + 3 / TU + (3 + ComputeTable(Sqrt,Corl_C)) / TU; // 6 floating add at SU for relative velocity and acceleration,
+                                                                                                  // 3 floating addition for relative_velocity, 3 mac and 1 sqrt for path_velocity, 
+    M = M + 6; // 3 for path_velocity, 3 for path_acceleration
+    L = L + 3; // 1 for floating additiona, 1 for floating multiplication, 1 for sqrt
+    B = B + 12 / SU;// 6 for two sets of path_velocity, 6 for two sets of path acceleration
+    //% end of the Path veloctiy compuation
+
+
+    //% Path gain computation
+    //     Path_gain is calculated by first evluate the path distance at scenario update, the compelete equation for the gain is the  
+    //     Path_gain = 1/(16pi^2) * 1/path_distance^2 * 1/f0^2
+    //     f0: the carrier frequency of the channel 
+
+    C = C + ComputeTable(Div_HF,Corl_C) / TU; // path_distance^2 is available from the path distance computation, only one floating division.
+    M = M + 1; // 1 for constant;
+    L = L + ComputeTable(Div_HF,Corl_C); // 1 for foating division;
+    B = B + 1/TU; // 1 for path_distance^2; // added to wenhaos code the dependence of bandwidth on TU
+    //% end of the path gain computation
+
+
+    // Path delay computation
+    //     Path_delay is computed by divide the path distance by speed of light
+    //     path_delay = path_distance / c;
+    C = C + ComputeTable(Div_HF,Corl_C) / TU; // path_distance2 is available from the path distance computation, only one floating division to get delay.
+    M = M + 1; // 1 for speed of light;
+    L = L + ComputeTable(Div_HF,Corl_L); // 1 for foating division;
+    B = B + 1/TU; // 1 for distance; // added to wenhaos code the dependence of bandwidth on TU
+    // end of the path delay computation
+
+    C = C * NF;
+    M = M * NF;
+    L = L;
+    B = B * NF;
+  }
+
+  // RCS
+  void Band::rcs_cmbl(single_band_ge_stats & fed_cmbl){
+    // TU - Update time
+    // PT - Number of paths
+    // OB - Number of objects
+    
+    float TU = fed_cmbl.global_fid.upd_rate;
+    float PT = fed_cmbl.global_fid.num_path;
+    float OB = fed_cmbl.global_fid.num_obj;
+
+    float C = 0; // Compute - in terms of 64bit FP MACs - Total number of MAC units accessed per sec
+    float M = 0; // Memory in terms of 64 bit FP Units - Total memory needed for all objects
+    float B = 0; // Memory Bandwidth in terms of 64bit FP I/O operations required - Total memory access per second
+    float L = 0; // Latency in terms of number of clock cycles required for this step
+
+    //// RCS fidelity
+    // Order 0
+    if (fed_cmbl.rcs.order == 0){
+        C = 0;
+        M = 1;
+        B = 1;
+        L = 0;
+    }
+    // Order 1
+    else if (fed_cmbl.rcs.order == 1){
+        std::cout << 'RCS fidelity order not supported.';
+        C = 0;
+        M = 0;
+        B = 0;
+        L = 0;
+    }
+
+    // Order 2
+    else if (fed_cmbl.rcs.order == 2){
+        C = PT*(5 + 3*fed_cmbl.rcs.points + 2*ComputeTable(Cos,Corl_L) + 3*ComputeTable(Sin,Corl_C))/TU;
+        M = OB*4*fed_cmbl.rcs.points;
+        B = PT*4*fed_cmbl.rcs.points/TU;
+        L = 0;
+    }
+
+    // Order 3
+    else if (fed_cmbl.rcs.order == 3){
+        C = PT*(5 + 7*fed_cmbl.rcs.points + 2*ComputeTable(Cos,Corl_L) + 3*ComputeTable(Sin,Corl_C))/TU;
+        M = OB*7*fed_cmbl.rcs.points;
+        B = PT*7*fed_cmbl.rcs.points/TU;
+        L = 0;
+    }
+
+    // Order 4
+    else if (fed_cmbl.rcs.order == 4){
+        C = PT*(5 + 12*fed_cmbl.rcs.points + 2*ComputeTable(Cos,Corl_L) + 3*ComputeTable(Sin,Corl_C))/TU;
+        M = OB*8*fed_cmbl.rcs.points;
+        B = PT*8*fed_cmbl.rcs.points/TU;
+        L = 0;
+    }
+
+    // Order 5
+    else if (fed_cmbl.rcs.order == 5){
+        std::cout << 'RCS fidelity order not supported.';
+        C = 0;
+        M = 0;
+        B = 0;
+        L = 0;
+    }
+    // Order 6
+    else if (fed_cmbl.rcs.order == 6){
+        C = 0;
+        M = OB*(360/fed_cmbl.rcs.angle)*(180/fed_cmbl.rcs.angle)*(360/fed_cmbl.rcs.angle)*(180/fed_cmbl.rcs.angle)*fed_cmbl.rcs.freq*fed_cmbl.rcs.plzn*fed_cmbl.rcs.samples;
+        B = PT*fed_cmbl.rcs.samples/TU;
+        L = 0;
+    }
+    else{
+        std::cout << 'RCS fidelity order not supported.';
+        C = 0;
+        M = 0;
+        B = 0;
+        L = 0;
+    }
+
+    fed_cmbl.rcs.set_cmbl(C, M, B, L);
+  }
+
+  // Time Update
+  void Band::tu_cmbl(single_band_ge_stats & fed_cmbl){
+    // Given Fidelites (Change these according to your blocks inputs)
+    float TU = fed_cmbl.global_fid.upd_rate;
+    float NF = fed_cmbl.global_fid.num_path; // no need to 2X factor
   
-  // Path Delay
-  int path_delay_flop = 20 * (_n_tx * _n_obj + _n_obj * _n_rx + _n_tx * _n_rx);
-
-  // Convert FLOPS to AREA
-
-  // relative location computation
-  float relative_location_comp_area = ((float)fast_relative_loc_flop/(float) _high_update_period
-                        + (float)slow_relative_loc_flop/(float) _low_update_period) / ge._t->_flops_per_mm2_per_cycle;
-  stats.total_relative_location_comp_area += relative_location_comp_area;
-  ge.set_relative_location_comp_area(relative_location_comp_area);
-  // affine transformation computation
-  float affine_transform_comp_area = (float)affine_transform_flop * ((float)frac_slow / (float)_low_update_period 
-                        + (float)frac_fast / (float)_high_update_period) / ge._t->_flops_per_mm2_per_cycle;
-  stats.total_affine_transform_comp_area += affine_transform_comp_area;
-  ge.set_affine_transform_comp_area(affine_transform_comp_area);
-
-  // relative motion
-  float relative_motion_comp_area = ((float)fast_relative_mot_flop/(float)_high_update_period 
-                        + (float)slow_relative_mot_flop/(float)_low_update_period) / ge._t->_flops_per_mm2_per_cycle;
-  stats.total_relative_motion_comp_area += relative_motion_comp_area;
-  ge.set_relative_motion_comp_area(relative_motion_comp_area);
-
-  // path gain computation
-  float path_gain_comp_area = (float)path_gain_flop / ge._t->_flops_per_mm2_per_cycle;
-  stats.total_path_gain_comp_area += path_gain_comp_area;
-  ge.set_path_gain_comp_area(path_gain_comp_area);
-  
-  // path delay computation
-  float path_delay_comp_area = (float)path_delay_flop * ((float)frac_slow / (float)_low_update_period 
-                        + (float)frac_fast / (float)_high_update_period) / ge._t->_flops_per_mm2_per_cycle;
-  stats.total_path_delay_comp_area += path_delay_comp_area;
-  ge.set_path_delay_comp_area(path_delay_comp_area);
-
-  return ge.comp_area();
-}
-
-float Band::ge_mem_byte(ge_core & ge, ge_stats & stats){
-  float antenna_4th_mem = (ge.get_4th_antenna_pattern_mem() * num_links()); //in Byte
-  float antenna_5th_mem = (ge.get_5th_antenna_pattern_mem() * _n_platform); //in Byte
-  //printf("%f bytes per object", mem_required_per_object);
-  this->antenna_0th_mem = 0.0;
-  this->antenna_4th_mem = antenna_4th_mem;
-  this->antenna_5th_mem = antenna_5th_mem;
-  stats.total_mem_bytes += antenna_4th_mem + antenna_5th_mem;
-
-  return antenna_4th_mem + antenna_5th_mem;
-}
+    float C = 0; // Compute - in terms of 64bit FP MACs
+    float M = 0; // Memory in terms of 64 bit FP Units
+    float B = 0; // Memory Bandwidth in terms of 64bit FP I/O operations required
+    float L = 0; // Latency in terms of number of clock cycles required for this step
 
 
 
+    //% UpdateRate computation
+    //     UpdateRate is inversly propotional to path speed for a fixed noise threshold
+    //     TU = C / v;
+    //     C: some constant including noise threshold
+    //     v: path velocity from other block
+
+    C = C + ComputeTable(Div_HF, Corl_C) / TU; // path_distance^2 is available from the path distance computation, only one floating division.
+    M = M + 1; // 1 for constant;
+    L = L + ComputeTable(Div_HF, Corl_C); // 1 for foating division;
+    B = B + 1/TU; // 1 for path velocity
+    //% end of the path gain computation
+
+    C = C * NF;
+    M = M * NF;
+    L = L;
+    B = B * NF;
+
+    fed_cmbl.tu.set_cmbl(C, M, B, L);
+  }
+
+  void Band::get_ge_cmbl(single_band_ge_stats & fed_cmbl){
+    coordinate_trans_cmbl(fed_cmbl);
+    nr_engine_cmbl(fed_cmbl);
+    relative_orientation_cmbl(fed_cmbl);
+    antenna_gain_cmbl(fed_cmbl);
+    path_gain_cmbl(fed_cmbl);
+    rcs_cmbl(fed_cmbl);
+    tu_cmbl(fed_cmbl);
+  }
 
 
 int get_best_ppu() {
@@ -215,72 +500,19 @@ struct PPUStats {
   }
 };
 
-void evaluate_ge(ge_core * ge, std::vector<Band>& scene_vec, drbe_wafer& w, 
-                ge_stats & stats, fedelity fed){
-
-  
-  float total_ge_comp_area = 0.0;
-  float total_mem_bytes = 0.0;
-  
-  int idx = 0;
+void evaluate_ge(std::vector<Band>& scene_vec){  
   for(auto & b : scene_vec) {
-    //printf("band #%d, ", idx++);
-    float ge_comp_area = b.ge_comp_area(*ge, stats);
-    float ge_mem_byte = b.ge_mem_byte(*ge, stats);
-    b.ge_area += ge_comp_area;
-    total_ge_comp_area += ge_comp_area;
-    total_mem_bytes += ge_mem_byte;
-    int num_ge_core = ceil(ge_comp_area / 0.68);
-    //printf("%f ge compute area needed, chiplet area is %f \n", ge_comp_area, w.chiplet_area());
-    int num_chiplet = ceil(ge_comp_area / w.chiplet_area());
-    //printf("before count the chiplet from GE, there are %d chiplets\n", b.num_chiplets());
-    b.mem_byte += ge_mem_byte;
-    //printf("Current Band requires %0.9f bandwidth (Byte/s)\n", ge_bandwidth);
-    stats.num_ge_core += num_ge_core;
-    //printf("Scenario has %d chiplets, now add %d more chiplets for GE, ", b.num_chiplet, num_chiplet);
-    b.num_chiplet += num_chiplet;
-    b.num_ge_chiplet = num_chiplet;
-    //printf("with GE chiplets, the total chiplets are %d\n", b.num_chiplet);
-    stats.ge_core_histo[num_ge_core]++;
-    stats.chiplet_histo[num_chiplet]++;
-    //printf("finished\n");
+    b.get_ge_cmbl(b.ge_stat);
   }
-
-  // Compute Resource
-  stats.avg_relative_location_comp_area = stats.total_relative_location_comp_area / scene_vec.size();
-  stats.avg_affine_transform_comp_area = stats.total_affine_transform_comp_area / scene_vec.size();
-  stats.avg_relative_motion_comp_area = stats.total_relative_motion_comp_area / scene_vec.size();
-  stats.avg_path_gain_comp_area = stats.total_path_gain_comp_area / scene_vec.size();
-  stats.avg_path_delay_comp_area = stats.total_path_delay_comp_area / scene_vec.size();
-  // Integrate with NR engine
-  total_ge_comp_area += (ge->get_nrengine_comp(fed) / w._t->_fp_macc_per_mm2);
-  stats.avg_ge_comp_area = total_ge_comp_area / scene_vec.size();
-  
-  // Memory Resource
-  // Integrate with NR engine
-  total_mem_bytes = (ge->get_nrengine_mem(fed)) * 8; //Sihao: I believe 64-bit FP is 8 bytes
-  stats.avg_mem_bytes = total_mem_bytes / scene_vec.size();
-
-  // Statistic Aggregation
-  stats.total_ge_comp_area = total_ge_comp_area;
-  stats.total_mem_bytes = total_mem_bytes;
-
 }
 
-ge_core * design_ge_core_for_scenario(std::vector<Band>& scene_vec, drbe_wafer& w, ge_stats & stats, fedelity fed) {
+ge_core * design_ge_core_for_scenario(std::vector<Band>& scene_vec, drbe_wafer& w) {
   ge_core* ge = new ge_core(&*w._t); //needs to be null so we don't delete a non-pointer
 
-  evaluate_ge(ge, scene_vec, w, stats, fed);
+  evaluate_ge(scene_vec);
 
-  // After evaluation, assign the average computation area as computation resource of GE
-  ge->relative_location_comp_area = stats.avg_relative_location_comp_area;
-  ge->affine_transform_comp_area = stats.avg_affine_transform_comp_area;
-  ge->relative_motion_comp_area = stats.avg_relative_motion_comp_area;
-  ge->path_gain_comp_area = stats.avg_path_gain_comp_area;
-  ge->path_delay_comp_area = stats.avg_path_delay_comp_area;
-  ge->mem_byte = stats.avg_mem_bytes;
-
-
+  // TODO: how to design the ge based on the statistic of all scenarios
+  // ......
 
   return ge;
 }
@@ -718,154 +950,40 @@ int main(int argc, char* argv[]) {
   } PPUStats stats;
 
 
-  // Design the GE core
-  //drbe_wafer w(&t,300,(float)20);
-  fedelity fed;
-  ge_stats ge_core_stats;
-  ge_core * ge = design_ge_core_for_scenario(scene_vec, w, ge_core_stats, fed);
-  printf("Chiplet Needed by GE Histogram: ");
-  ge_core_stats.print_chiplet_histo();
-  
-  printf("\n");
+  // -------------------------- Design the GE core ---------------------------
 
-  int total_num_links = 0;
-  // Calculate the Number of Wafer needed (considering the GE)
-  for(auto & b : scene_vec){
-    //printf("%d chiplets needed for this scenario, %d per wafer\n", b.num_chiplet, w.num_units());
-    int num_wafer = ceil((float)b.num_chiplet / w.num_units());
-    if(num_wafer <= 100000){
-      stats.wafer_ppu_ge_histo[num_wafer]++;
-    }else{
-      //printf("Warning: %d wafers needed!\n", num_wafer);
-    }
-    total_num_links += b.num_links();
-
+  // Define the Fidelity
+  for(auto b : scene_vec){
+    // Global
+    b.ge_stat.global_fid.upd_rate = w._t->ge_freq();
+    b.ge_stat.global_fid.num_obj = b._n_obj;
+    b.ge_stat.global_fid.num_path = b.num_paths();
+    // Coordinate Transformation
+    b.ge_stat.coordinate_trans.ta1_scene_upd_rate = 1e-3;
+    // NR Engine
+    b.ge_stat.nr_engine.interpolation_ord = 6;
+    b.ge_stat.nr_engine.conv_fed = 2;
+    // Antenna
+    b.ge_stat.antenna_gain.order = 5;
+    b.ge_stat.antenna_gain.num_antenna = 16;
+    b.ge_stat.antenna_gain.res_angle = 1;
+    b.ge_stat.antenna_gain.dict_dim = 800;
+    // RCS
+    b.ge_stat.rcs.order = 6;
+    b.ge_stat.rcs.points = 20;
+    b.ge_stat.rcs.angle = 2;
+    b.ge_stat.rcs.freq = 1;
+    b.ge_stat.rcs.plzn = 4;
+    b.ge_stat.rcs.samples = 10;
   }
 
-  printf("Num Links = %f\n", (float)total_num_links / scene_vec.size());
-
-  printf("Wafer Needed by GE and PPU Histogram: ");
-  stats.print_wafer_ge_ppu_histo();
-  printf("\n");
-  printf("Breakdown of GE Computation Source:\n");
-  printf("Total Area (mm2):%f\n"\
-          "Relative Location Computation (mm2):%f\n"\
-          "Affine Transformation (mm2):%f\n"\
-          "Relative Motion Computation (mm2):%f\n"\
-          "Path Gain Computation (mm2):%f\n"\
-          "Path Delay Computation (mm2):%f\n"\
-          "DRAM Memory needed (MByte):%f\n",
-          ge_core_stats.avg_ge_comp_area,
-          ge_core_stats.avg_relative_location_comp_area, 
-          ge_core_stats.avg_affine_transform_comp_area,
-          ge_core_stats.avg_relative_motion_comp_area,
-          ge_core_stats.avg_path_gain_comp_area, 
-          ge_core_stats.avg_path_delay_comp_area,
-          ge_core_stats.avg_mem_bytes/1024/1024);
-
-  // Compute
-  float avg_0th_comp = 0.0;
-  float avg_4th_comp = 0.0;
-  float avg_5th_comp = 0.0;
-  // Memory
-  float avg_4th_mem = 0.0;
-  float avg_5th_mem = 0.0;
-
-
-  std::ofstream antenna_log;
-  antenna_log.open ("antenna.csv");
-  antenna_log << "0th_order_comp, 4th_order_comp, 5th_order_comp, 4th_order_mem, 5th_order_mem\n";
-  for(auto & b : scene_vec){
-    // Compute
-    avg_0th_comp += b.antenna_0th_comp;
-    avg_4th_comp += b.antenna_4th_comp;
-    avg_5th_comp += b.antenna_5th_comp;
-    // Memory
-    avg_4th_mem += b.antenna_4th_mem / 1e6;
-    avg_5th_mem += b.antenna_5th_mem / 1e6;
-    antenna_log << b.antenna_0th_comp<< ", " << b.antenna_4th_comp<< ", " << b.antenna_5th_comp<< ", " 
-                << b.antenna_4th_mem / 1e6<< ", " << b.antenna_5th_mem / 1e6<< "\n";
-  }
-  antenna_log.close();
-  printf("0th Order Antenna computation: Avg. %f Gflops, Total %f Gflops\n", avg_0th_comp / scene_vec.size(), avg_0th_comp);
-  printf("4th Order Antenna computation: Avg. %f Gflops, Total %f Gflops\n", avg_4th_comp / scene_vec.size(), avg_4th_comp);
-  printf("5th Order Antenna computation: Avg. %f Gflops, Total %f Gflops\n", avg_5th_comp / scene_vec.size(), avg_5th_comp);
-  printf("4th Order Antenna Memory: Avg. %f MByte, Total %f MByte\n", avg_4th_mem / scene_vec.size(), avg_4th_mem);
-  printf("5th Order Antenna Memory: Avg. %f MByte, Total %f MByte\n", avg_5th_mem / scene_vec.size(), avg_5th_mem);
+  // ------- Design the Geometry Engine ------
+  ge_core * ge = design_ge_core_for_scenario(scene_vec, w);
 
   // ------- PPU vs. GE DSE ------
-  printf("------- PPU vs. GE DSE ------\n");
-  int total_num_chiplet = w.area() / w.chiplet_area();
-  int * ge_percentage_scenario_covered = new int[total_num_chiplet];
-  std::fill_n(ge_percentage_scenario_covered,total_num_chiplet,0);
-  for(int num_GE_chiplet = 1; num_GE_chiplet <= total_num_chiplet; num_GE_chiplet++){
-    int num_ppu_chiplet = total_num_chiplet - num_GE_chiplet;
-    for(auto & b : scene_vec){
-      //printf("#PPU = %d, #GE = %d, needed #PPU = %d, #GE = %d\n", num_ppu_chiplet, num_GE_chiplet, b.num_ppu_chiplet, b.num_ge_chiplet);
-      if(b.num_ge_chiplet <= num_GE_chiplet && b.num_ppu_chiplet <= num_ppu_chiplet){
-        ge_percentage_scenario_covered[num_GE_chiplet - 1]++;
-      }
-    }
-  }
-  
-  
-  if(verbose_ge_info) {
-    printf("The percentage of Covered Scenarios for different number of GE chiplets:\n");
-    for(int idx = 0; idx < total_num_chiplet; idx ++){
-      printf("%d ", ge_percentage_scenario_covered[idx]);
-    }
-    printf("\n");
-  }
-
-  delete ge_percentage_scenario_covered;
 
   // ------- PPU vs. GE + GM DSE ------
-  printf("------- PPU vs. GE + GM DSE ------\n");
-  int ** percentage_scenario_covered = new int*[total_num_chiplet];
-  for(int i = 0; i < total_num_chiplet; i ++){
-    percentage_scenario_covered[i] = new int[101];
-    std::fill_n(percentage_scenario_covered[i],101,0);
-  }
-  for(int num_GE_chiplet = 1; num_GE_chiplet <= total_num_chiplet; num_GE_chiplet++){
-    int num_ppu_chiplet = total_num_chiplet - num_GE_chiplet;
-    for(int gm_ratio = 0; gm_ratio < 101; gm_ratio++){
-      float total_geometry_area = num_GE_chiplet * w.chiplet_area();
-      float ge_area = (1 - (float)gm_ratio / 100) * total_geometry_area;
-      float gm_area = ((float)gm_ratio / 100) * total_geometry_area;
-      float gm_byte = gm_area * ge->tech->_dram_Mb_per_mm2 * 1024 * 1024 / 8;
-      for(auto & b : scene_vec){
-        //printf("#PPU = %d, #GE = %d, needed #PPU = %d, #GE = %d\n", num_ppu_chiplet, num_GE_chiplet, b.num_ppu_chiplet, b.num_ge_chiplet);
-        if(b.mem_byte <= gm_byte && b.ge_area <= ge_area && b.num_ppu_chiplet <= num_ppu_chiplet){
-          percentage_scenario_covered[num_GE_chiplet - 1][gm_ratio]++;
-        }
-      }
-    }
-  }
-  
-  /*
-  printf("The percentage of Covered Scenarios for different number of GE chiplets:\n");
-  for(int idx = 0; idx < total_num_chiplet; idx ++){
-    printf("%d ", percentage_scenario_covered[idx]);
-  }
-  */
-  
-  std::ofstream dse_log;
-  dse_log.open("dse.csv");
-  printf("Start to write to DSE log\n");
-  for(int num_GE_chiplet = 1; num_GE_chiplet <= total_num_chiplet; num_GE_chiplet++){
-    bool new_line = true;
-    for(int gm_ratio = 0; gm_ratio < 101; gm_ratio++){
-      if(new_line){
-        dse_log << "\n" << percentage_scenario_covered[num_GE_chiplet - 1][gm_ratio];
-        new_line = false;
-      }else{
-        dse_log << ", " << percentage_scenario_covered[num_GE_chiplet - 1][gm_ratio];
-      }
-    }
-  }
-  antenna_log.close();
 
-  delete percentage_scenario_covered;
   return 0;
 }
 
