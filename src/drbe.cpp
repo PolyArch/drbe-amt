@@ -984,6 +984,15 @@ int main(int argc, char* argv[]) {
   std::ofstream ge_tradeoff;
   ge_tradeoff.open("ge_tradeoff.csv");
   printf("Start to write GE tradeoff to `ge_tradeoff.csv`\n");
+  // Print the header
+  ge_tradeoff << "update-rate, number-object, number-path, "
+              << "coor-trans-compute, coor-trans-memory, coor-trans-bandwidth, coor-trans-latency, "
+              << "nr-engine-compute, nr-engine-memory, nr-engine-bandwidth, nr-engine-latency, "
+              << "relative-orientation-compute, relative-orientation-memory, relative-orientation-bandwidth, relative-orientation-latency, "
+              << "antenna-compute, antenna-memory, antenna-bandwidth, antenna-latency, "
+              << "path-gain-compute, path-gain-memory, path-gain-bandwidth, path-gain-latency, "
+              << "rcs-compute, rcs-memory, rcs-bandwidth, rcs-latency, "
+              << "tu-compute, tu-memory, tu-bandwidth, tu-latency\n";
   for(auto & b : scene_vec){
     ge_tradeoff << b.ge_stat.global_fid.upd_rate << ", "
                 << b.ge_stat.global_fid.num_obj << ", "
