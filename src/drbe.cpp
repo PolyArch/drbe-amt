@@ -616,21 +616,22 @@ int main(int argc, char* argv[]) {
   //for(fast_update_period = 1000; fast_update_period < 1000000; 
   //    fast_update_period*=1.2589254117941672104239541063958) {
   
-  for(float frac_clutter = 0; frac_clutter <= 100; frac_clutter += 20) {
+  //for(float frac_clutter = 0; frac_clutter <= 100; frac_clutter += 20) {
 
-    for(auto& b : scene_vec) {
-      //b._high_update_period=fast_update_period;
-      b._frac_clutter = frac_clutter/100.0f;
-    }
+  //  for(auto& b : scene_vec) {
+  //    //b._high_update_period=fast_update_period;
+  //    b._frac_clutter = frac_clutter/100.0f;
+  //  }
 
   //printf("\nTechnology Density Experiment: Increase the Density (factor \"v\" below)\n");
-  //float old = t.area_multiplier();
-  //float v_range = 4;
-  //float factor = 1.0905077326652576;
-////  factor = factor * factor; // * factor * factor; // four times less datapoints
-  //for(float v = old; v < old*v_range+0.01; v*=factor) {
-  //  t.set_area_multiplier(v);
-
+  float old = w.wafer_io();//t.area_multiplier();
+  float v_range = 100;
+  float factor = 1.0905077326652576;
+  //factor = factor * factor;
+  factor = factor * factor * factor * factor;
+  for(float v = old; v < old*v_range+0.01; v*=factor) {
+    //t.set_area_multiplier(v);
+    w.set_wafer_io(v);
   
 
 
@@ -667,7 +668,7 @@ int main(int argc, char* argv[]) {
 
     //printf("Fast Update Period: %0.0fus, ", fast_update_period/1000);
     
-    //printf("v: %0.3f, ", v);
+    printf("v: %0.3f, ", v);
     
     printf("avg_clut: %f, "\
            "%dmm^2 PPU (%0.2f), in-MB: %0.2f, clust: %d, flex_clust: %d, coef/clust %d, "\

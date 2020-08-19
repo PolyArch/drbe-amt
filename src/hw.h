@@ -531,6 +531,16 @@ public:
     _limit_wafer_io=v;
   }
 
+
+  void set_wafer_io(int v) {
+    _max_input=v;
+    _max_output=v;
+  }
+  int wafer_io() {
+    return _max_input;
+  }
+
+
   int max_input()  {return _max_input;}
   int max_output() {return _max_output;}
 

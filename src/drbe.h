@@ -613,6 +613,8 @@ class ScenarioGen {
       
       b._high_update_period = rand_rng(10000 /*10us*/,100000 /*100us*/);
 
+      b._frac_clutter=rand_rng(min_clutter(),max_clutter())/100.0f;
+
       for(int i = 0; i < 100; ++i) {
         //b.increase_difficulty(1);
         //b.increase_difficulty(2); //upgrade slow to fast
@@ -638,6 +640,7 @@ class ScenarioGen {
   static int max_coef_per_obj() {return 60;}
   static int min_range       () {return 50;}
   static int max_range       () {return 500;}
-
+  static int min_clutter     () {return 0;}
+  static int max_clutter     () {return 30;}
 };
 
