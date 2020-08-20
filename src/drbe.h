@@ -11,6 +11,7 @@
 #include <dsp.h>
 #include "hw.h"
 #include "util.h"
+#include <sstream>
 
 // compute, memory, bandwidth, latency
 struct cmbl{
@@ -516,7 +517,7 @@ class Band {
   }
 
   int num_paths(){
-    return _n_tx * _n_rx * reflectors();
+    return _n_tx * _n_rx * reflectors() * _n_bands;
   }
 
   bool could_be_harder_than(Band& other) {
@@ -546,10 +547,16 @@ class Band {
       // transmitters and receivers PER BAND
       _n_tx = ceil((float) platforms() / _n_bands);
       _n_rx = ceil((float) platforms() / _n_bands); 
-  
+
+      // fix the ratio of fast object and object
+      _n_obj = 0.25 * _n_tx; // nominal 25% worst 50%
+      _n_fast = _n_obj * 0.5; // nominal 50 % worst 100%
+      _n_slow = _n_obj - _n_fast;
+      _n_fixed = _n_fixed - _n_fast - _n_slow;
+
       // objects in the scene that move are objects to model
       // Other objects get lost in clutter
-      _n_obj = _n_slow + _n_fast;
+      //_n_obj = _n_slow + _n_fast;
       _n_full_range_obj = _n_fast;
   }
 
@@ -570,6 +577,90 @@ class Band {
   void tu_cmbl(single_band_ge_stats & fed_cmbl);
   // All
   void get_ge_cmbl(single_band_ge_stats & fed_cmbl);
+  // Dump GE tradeoff
+  std::string print_ge_tradeoff(){
+    std::stringstream ss;
+    assert(!(_is_aidp && _is_direct_path));// can not be AIDP and DP the same time
+    ss // Channel Model
+      << (_is_aidp ? "AIDP" : (_is_direct_path ? "DP" : "TDL")) << ", "
+      // Global Parameter
+      << ge_stat.global_fid.upd_rate << ", "
+      // Object(on sky, reflector), Transmitter, Receiver, Path and Bands
+      << ge_stat.global_fid.num_obj << ", "                
+      << _n_tx << ", "
+      << _n_rx << ", "
+      << ge_stat.global_fid.num_path << ", "
+      << _n_bands << ", "
+      // ratio obj / tx or rx
+      << (float)ge_stat.global_fid.num_obj/_n_tx << ", "
+      // flector by speed
+      << _n_fast << ", "
+      << _n_slow << ", "
+      << _n_fixed << ", "
+      << platforms() << ", "
+      // wafer-level
+      << num_wafer << ", "
+      << target_num_wafer <<", "
+      << wafer_io_limit << ", "
+      // chiplet level
+      << chiplet_io_layer << ", "
+      // Clutter
+      << _frac_clutter << ", "
+      // Size
+      << _avg_coef_per_object << ", "
+      // Range
+      << _range << ", "
+      // GE fidelity
+      << ge_stat.coordinate_trans.ta1_scene_upd_rate << ", "
+      << ge_stat.nr_engine.interpolation_ord << ", "
+      << ge_stat.nr_engine.conv_fed << ", "
+      << ge_stat.antenna_gain.order << ", "
+      << ge_stat.antenna_gain.num_antenna << ", "
+      << ge_stat.antenna_gain.res_angle << ", "
+      << ge_stat.antenna_gain.dict_dim << ", "
+      << ge_stat.rcs.order << ", "
+      << ge_stat.rcs.points << ", "
+      << ge_stat.rcs.angle << ", "
+      << ge_stat.rcs.freq << ", "
+      << ge_stat.rcs.plzn << ", "
+      << ge_stat.rcs.samples << ", "
+      // Coordinate
+      << ge_stat.coordinate_trans.compute << ", "
+      << ge_stat.coordinate_trans.memory << ", "
+      << ge_stat.coordinate_trans.bandwidth << ", "
+      << ge_stat.coordinate_trans.latency << ", "
+      // NR Engine
+      << ge_stat.nr_engine.compute << ", "
+      << ge_stat.nr_engine.memory << ", "
+      << ge_stat.nr_engine.bandwidth << ", "
+      << ge_stat.nr_engine.latency << ", "
+      // Relative Orientation
+      << ge_stat.relative_orientation.compute << ", "
+      << ge_stat.relative_orientation.memory << ", "
+      << ge_stat.relative_orientation.bandwidth << ", "
+      << ge_stat.relative_orientation.latency << ", "
+      // Antenna
+      << ge_stat.antenna_gain.compute << ", "
+      << ge_stat.antenna_gain.memory << ", "
+      << ge_stat.antenna_gain.bandwidth << ", "
+      << ge_stat.antenna_gain.latency << ", "
+      // Path gain and velocity
+      << ge_stat.path_velocity.compute << ", "
+      << ge_stat.path_velocity.memory << ", "
+      << ge_stat.path_velocity.bandwidth << ", "
+      << ge_stat.path_velocity.latency << ", "
+      // RCS
+      << ge_stat.rcs.compute << ", "
+      << ge_stat.rcs.memory << ", "
+      << ge_stat.rcs.bandwidth << ", "
+      << ge_stat.rcs.latency << ", "  
+      // Tu
+      << ge_stat.tu.compute << ", "
+      << ge_stat.tu.memory << ", "
+      << ge_stat.tu.bandwidth << ", "
+      << ge_stat.tu.latency << "\n";
+    return ss.str();
+  }
 
   bool _is_direct_path=false;
   bool _is_aidp=false;
@@ -593,10 +684,17 @@ class Band {
   int _avg_coef_per_object;
   int _range;
 
+  // Wafer level
+  int num_wafer = 0; // number of wafer that required to support this scenario
+  int target_num_wafer = 0; // the number of wafer we want for this scenario
+  int wafer_io_limit = 0; // the target wafer io
+
+  // chiplet level
+  float chiplet_io_layer = 0.0;
+
   float _low_update_period=1000000; //
   float _high_update_period=10000; //clock cycles?
   // Compute Area needed
-  int num_chiplet = 0;
   int num_ppu_chiplet = 0;
   int num_ge_chiplet = 0;
   float _frac_clutter = 0.0;
@@ -611,9 +709,9 @@ class Band {
 class ScenarioGen {
 
   public:
-
   static void gen_scenarios(std::vector<Band>& scene_vec, bool direct_path, bool aidp,
-      bool challenge_scenario, int num_scenarios) {
+      bool challenge_scenario, int num_scenarios,
+      bool is_platform_fixed, int fixed_platforms) {
 
     if(challenge_scenario) {
       Band b;
@@ -636,34 +734,41 @@ class ScenarioGen {
     // Scenario Generation
     for(int i_scene = 0; i_scene < num_scenarios; i_scene++) {
       Band b;
-      int platforms = rand_rng(min_platforms(),max_platforms());
+      int platforms;
+      if(is_platform_fixed){
+        platforms = fixed_platforms;
+      }else{
+        platforms = rand_rng(min_platforms(),max_platforms());
+      }
+      /* Sihao comment out for purpose of generating channel model (fix ratio)
       int max_rand_reflect = min(max_reflectors(),platforms);
       int num_reflectors = rand_rng(1,max_rand_reflect);
 
       int slow = rand_rng(0,num_reflectors);
-
+      */
       b._is_direct_path=direct_path;
       b._is_aidp=aidp;
 
-      b._n_fixed = platforms-num_reflectors;
+      // assume all object is fixed first, will be adjusted in b.recalculate_txrx();
+      b._n_fixed = platforms;
+      b._n_fast = 0;
+      b._n_slow = 0;
       assert(b._n_fixed>=0);
-      b._n_slow  = slow;
-      b._n_fast = num_reflectors-slow;
-      //int half_fast = b._n_fast/2;
-      //b._n_fast -= half_fast;
-      //b._n_slow += half_fast;
   
-      b._n_bands = rand_rng(min_bands(),max_bands());
+      b._n_bands = 2;// nominal 2 worst 1
+                    //rand_rng(min_bands(),max_bands());
 
       b.recalculate_txrx();
-  
-      b._avg_coef_per_object = (rand_rng(min_coef_per_obj(),max_coef_per_obj()) / 4) * 4;
+      //fix the coef per object to be 60
+      b._avg_coef_per_object = 60;//(rand_rng(min_coef_per_obj(),max_coef_per_obj()) / 4) * 4;
       b._n_full_range_obj = b._n_fast;
-      b._range = (rand_rng(min_range(),max_range())/10)*10;
+      b._range = 250;// nominal 250 worst 500
+              //(rand_rng(min_range(),max_range())/10)*10;
       
-      b._high_update_period = rand_rng(10000 /*10us*/,100000 /*100us*/);
+      b._high_update_period = 10000;//rand_rng(10000 /*10us*/,100000 /*100us*/);
 
-      b._frac_clutter=rand_rng(min_clutter(),max_clutter())/100.0f;
+      b._frac_clutter=0.1;  //nominal 0.1 worst 0.3
+              //rand_rng(min_clutter(),max_clutter())/100.0f;
 
       for(int i = 0; i < 100; ++i) {
         //b.increase_difficulty(1);
@@ -677,6 +782,33 @@ class ScenarioGen {
           b._avg_coef_per_object, b._range, b._high_update_period);
   */
       scene_vec.emplace_back(b);
+    }
+  }
+
+  // Define the geometry engine fidelity
+  static void set_fidelity(std::vector<Band>& scene_vec, drbe_wafer & w){
+    for(auto & b : scene_vec){
+      // Global
+      b.ge_stat.global_fid.upd_rate = 5e-6; // nominal 5e-6 max 50e-6
+      b.ge_stat.global_fid.num_obj = b._n_obj;
+      b.ge_stat.global_fid.num_path = b.num_paths();
+      // Coordinate Transformation
+      b.ge_stat.coordinate_trans.ta1_scene_upd_rate = 1e-3; 
+      // NR Engine
+      b.ge_stat.nr_engine.interpolation_ord = 4; // nominal 4 max 6
+      b.ge_stat.nr_engine.conv_fed = 2;
+      // Antenna
+      b.ge_stat.antenna_gain.order = 5;
+      b.ge_stat.antenna_gain.num_antenna = 16;
+      b.ge_stat.antenna_gain.res_angle = 2;
+      b.ge_stat.antenna_gain.dict_dim = 400; // nominal 400 max 800
+      // RCS
+      b.ge_stat.rcs.order = 4; // nominal 4 max 6
+      b.ge_stat.rcs.points = 20; // nominal 20 max 10
+      b.ge_stat.rcs.angle = 1;
+      b.ge_stat.rcs.freq = 1;
+      b.ge_stat.rcs.plzn = 4; // nominal 1 max 4
+      b.ge_stat.rcs.samples = 10;
     }
   }
 
