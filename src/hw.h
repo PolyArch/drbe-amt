@@ -305,11 +305,11 @@ public:
     switch (io_layer)
     {
     case 2:
-      _t->_chiplet_io_bits_per_mm2 = _t->_chiplet_io_bits_per_mm2;
+      _t->_chiplet_io_bits_per_mm2 = 2.56/4.4*1024*1;
       break;
 
     case 4:
-      _t->_chiplet_io_bits_per_mm2 = _t->_chiplet_io_bits_per_mm2 * 2;
+      _t->_chiplet_io_bits_per_mm2 = 2.56/4.4*1024*2;
       break;
     default:
       break;

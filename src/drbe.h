@@ -549,7 +549,7 @@ class Band {
       _n_rx = ceil((float) platforms() / _n_bands); 
 
       // fix the ratio of fast object and object
-      _n_obj = 0.25 * _n_tx; // nominal 25% worst 50%
+      _n_obj = 0.25 * _n_tx * _n_bands; // nominal 25% worst 50%
       _n_fast = _n_obj * 0.5; // nominal 50 % worst 100%
       _n_slow = _n_obj - _n_fast;
       _n_fixed = _n_fixed - _n_fast - _n_slow;
@@ -602,6 +602,7 @@ class Band {
       << num_wafer << ", "
       << target_num_wafer <<", "
       << wafer_io_limit << ", "
+      << tech_scaling << ", "
       // chiplet level
       << chiplet_io_layer << ", "
       // Clutter
@@ -688,7 +689,7 @@ class Band {
   int num_wafer = 0; // number of wafer that required to support this scenario
   int target_num_wafer = 0; // the number of wafer we want for this scenario
   int wafer_io_limit = 0; // the target wafer io
-
+  float tech_scaling = 0.0;
   // chiplet level
   float chiplet_io_layer = 0.0;
 

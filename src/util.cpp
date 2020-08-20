@@ -32,6 +32,7 @@ std::ofstream print_ge_tradeoff(std::string filename){
               << "number-wafer, "
               << "target-wafer, "
               << "wafer-io-limit, "
+              << "tech-scaling, "
               // Chiplet
               << "chiplet-io-layer, "
               // Clutter

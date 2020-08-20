@@ -738,7 +738,7 @@ path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafe
             clutter_ratio=1;
           }
 
-          for(int mem_ratio =4; mem_ratio < 60; mem_ratio+=2) {
+          for(int mem_ratio =1; mem_ratio < 99; mem_ratio+=2) {
             path_proc_unit* ppu =new path_proc_unit(&t);
 
             ppu->_is_dyn_reconfig=dynamic_reconfig;
@@ -867,20 +867,22 @@ int main(int argc, char* argv[]) {
   //  }
 
   //printf("\nTechnology Density Experiment: Increase the Density (factor \"v\" below)\n");
-  float old = 355.635;//w.wafer_io();//t.area_multiplier();
-  float v_range = 10;
-  float factor = 1.07460;
+  float old = t.area_multiplier();//t.area_multiplier();//w.wafer_io();//t.area_multiplier();
+  float v_range = 4;
+  float factor =1.04427;
   //factor = factor * factor;
   for(float v = old; v < old*v_range+0.01; v*=factor) {
-    //t.set_area_multiplier(v);
-    w.set_wafer_io(v);
+    t.set_area_multiplier(v);
+    //w.set_wafer_io(v);
     //int num_wafers_target=v;
     int num_wafers_target=1;
-    //if(num_wafers_target == 1){
-      //limit_wafer_io = false;
-    //}else{
-    //  limit_wafer_io = true;
-    //}
+    /*
+    if(num_wafers_target == 1){
+      limit_wafer_io = false;
+    }else{
+      limit_wafer_io = true;
+    }
+    */
     w.set_limit_wafer_io(limit_wafer_io);
     w.set_chiplet_io_layer(chiplet_io_layer);
 
@@ -900,8 +902,10 @@ int main(int argc, char* argv[]) {
 
     // record the target wafer
     for(auto & b : scene_vec){
-      //b.target_num_wafer = num_wafers_target;
+      b.target_num_wafer = num_wafers_target;
       b.chiplet_io_layer = w._t->_chiplet_io_bits_per_mm2;
+      b.wafer_io_limit = w.wafer_io();
+      b.tech_scaling = w._t->area_multiplier();
     }
 
     // Set GE fidelity
@@ -910,7 +914,7 @@ int main(int argc, char* argv[]) {
     path_proc_unit* best_ppu = design_ppu_for_scenarios(scene_vec,w,dynamic_reconfig);
     PPUStats stats;
 
-    if(!best_ppu){// if cannot design ppu continue
+    if(best_ppu == NULL){// if cannot design ppu continue
       continue;
     }
 
