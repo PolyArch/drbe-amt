@@ -765,9 +765,11 @@ path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafe
             if(stats.total_failures!=0){
               std::cout << "scenario failed\n";
             }
+            /*
             std::cout << "avg_corf: " << stats.avg_coef_per_mm2
                       << "best_coef: " << best_stats.avg_coef_per_mm2
                       << "fail: " << stats.total_failures<< endl;
+            */
             if((stats.avg_coef_per_mm2 > best_stats.avg_coef_per_mm2) && stats.total_failures==0) {
               path_proc_unit* old_best = best_ppu;
               best_stats = stats;
