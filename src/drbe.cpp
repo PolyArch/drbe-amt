@@ -867,22 +867,21 @@ int main(int argc, char* argv[]) {
   //  }
 
   //printf("\nTechnology Density Experiment: Increase the Density (factor \"v\" below)\n");
-  float old = t.area_multiplier();//t.area_multiplier();//w.wafer_io();//t.area_multiplier();
-  float v_range = 4;
-  float factor =1.04427;
+  float old = 1;//t.area_multiplier();//t.area_multiplier();//w.wafer_io();//t.area_multiplier();
+  float v_range = 32;
+  float factor = 2;
   //factor = factor * factor;
   for(float v = old; v < old*v_range+0.01; v*=factor) {
-    t.set_area_multiplier(v);
+    //t.set_area_multiplier(v);
     //w.set_wafer_io(v);
-    //int num_wafers_target=v;
-    int num_wafers_target=1;
-    /*
+    int num_wafers_target=v;
+    
     if(num_wafers_target == 1){
       limit_wafer_io = false;
     }else{
       limit_wafer_io = true;
     }
-    */
+    
     w.set_limit_wafer_io(limit_wafer_io);
     w.set_chiplet_io_layer(chiplet_io_layer);
 

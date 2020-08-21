@@ -549,8 +549,8 @@ class Band {
       _n_rx = ceil((float) platforms() / _n_bands); 
 
       // fix the ratio of fast object and object
-      _n_obj = 0.25 * _n_tx * _n_bands; // nominal 25% worst 50%
-      _n_fast = _n_obj * 0.5; // nominal 50 % worst 100%
+      _n_obj = 0.5 * _n_tx * _n_bands; //CASE: nominal 25% worst 50%
+      _n_fast = _n_obj * 1.0; //CASE: nominal 50 % worst 100%
       _n_slow = _n_obj - _n_fast;
       _n_fixed = _n_fixed - _n_fast - _n_slow;
 
@@ -756,19 +756,19 @@ class ScenarioGen {
       b._n_slow = 0;
       assert(b._n_fixed>=0);
   
-      b._n_bands = 2;// nominal 2 worst 1
+      b._n_bands = 1;//CASE: nominal 2 worst 1
                     //rand_rng(min_bands(),max_bands());
 
       b.recalculate_txrx();
-      //fix the coef per object to be 60
+      //fix the coef per object to be 60 CASE:
       b._avg_coef_per_object = 60;//(rand_rng(min_coef_per_obj(),max_coef_per_obj()) / 4) * 4;
       b._n_full_range_obj = b._n_fast;
-      b._range = 250;// nominal 250 worst 500
+      b._range = 500;//CASE: nominal 250 worst 500
               //(rand_rng(min_range(),max_range())/10)*10;
       
       b._high_update_period = 10000;//rand_rng(10000 /*10us*/,100000 /*100us*/);
 
-      b._frac_clutter=0.1;  //nominal 0.1 worst 0.3
+      b._frac_clutter=0.3;  //CASE: nominal 0.1 worst 0.3
               //rand_rng(min_clutter(),max_clutter())/100.0f;
 
       for(int i = 0; i < 100; ++i) {
@@ -790,25 +790,25 @@ class ScenarioGen {
   static void set_fidelity(std::vector<Band>& scene_vec, drbe_wafer & w){
     for(auto & b : scene_vec){
       // Global
-      b.ge_stat.global_fid.upd_rate = 5e-6; // nominal 5e-6 max 50e-6
+      b.ge_stat.global_fid.upd_rate = 50e-6; //CASE: nominal 5e-6 max 50e-6
       b.ge_stat.global_fid.num_obj = b._n_obj;
       b.ge_stat.global_fid.num_path = b.num_paths();
       // Coordinate Transformation
       b.ge_stat.coordinate_trans.ta1_scene_upd_rate = 1e-3; 
       // NR Engine
-      b.ge_stat.nr_engine.interpolation_ord = 4; // nominal 4 max 6
+      b.ge_stat.nr_engine.interpolation_ord = 6; //CASE: nominal 4 max 6
       b.ge_stat.nr_engine.conv_fed = 2;
       // Antenna
       b.ge_stat.antenna_gain.order = 5;
       b.ge_stat.antenna_gain.num_antenna = 16;
       b.ge_stat.antenna_gain.res_angle = 2;
-      b.ge_stat.antenna_gain.dict_dim = 400; // nominal 400 max 800
+      b.ge_stat.antenna_gain.dict_dim = 800; //CASE: nominal 400 max 800
       // RCS
-      b.ge_stat.rcs.order = 4; // nominal 4 max 6
-      b.ge_stat.rcs.points = 20; // nominal 20 max 10
+      b.ge_stat.rcs.order = 6; //CASE: nominal 4 max 6
+      b.ge_stat.rcs.points = 10; //CASE: nominal 20 max 10
       b.ge_stat.rcs.angle = 1;
       b.ge_stat.rcs.freq = 1;
-      b.ge_stat.rcs.plzn = 4; // nominal 1 max 4
+      b.ge_stat.rcs.plzn = 4; //CASE: nominal 1 max 4
       b.ge_stat.rcs.samples = 10;
     }
   }

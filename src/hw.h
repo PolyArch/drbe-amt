@@ -31,7 +31,7 @@ public:
 private:
   float _area_multiplier=1.0;
   float _fp_macc_per_mm2=400; //?
-  float _int_macc_per_mm2=700;
+  float _int_macc_per_mm2=700*4;
   float _sram_Mb_per_mm2=8.1f;
   
   // GE Params:
