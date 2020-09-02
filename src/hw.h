@@ -6,6 +6,7 @@
 
 // Math Constants
 #define SCALAR_MACC_PER_COMPLEX_MACC (4)
+#define SCALAR_MACC_PER_COMPLEX_ADD (1)
 
 using namespace std;
 
@@ -53,6 +54,7 @@ public:
 
 class router : hw_unit {
   static const int MaxDegree=16;
+  static const int DelayBufferEntries=40;
 public:
   router(tech_params* t) : hw_unit(t) {
   }
@@ -63,6 +65,13 @@ public:
     float area=0;
     area+=(_in_degree/num_networks*4)*(_out_degree/num_networks*4)*_bitwidth*_t->_router_constant;
     area*=num_networks;
+
+    // we also need some fifos -- also a weak model
+    float delay_fifo_bits = DelayBufferEntries * _bitwidth * _in_degree * 4; //arbitrary constant
+    float delay_fifo_Mbits = delay_fifo_bits/1024.0/1024.0;
+    float delay_fifo_area = delay_fifo_Mbits * (1.0/_t->sram_Mb_per_mm2());
+    area+=delay_fifo_area;
+
     return area;
   }
   int _in_degree=8;
@@ -178,17 +187,34 @@ public:
   void init() {
   }
 
+  int num_point_clusters() {
+    int val = _num_clusters - _num_flexible_clusters;
+    assert(val >= 0);
+    return val;
+  }
+
+  int num_full_clusters() {
+    return _num_clusters;
+  }
+
   float path_conv_area() {
     float area=0;
 
-    int fixed_macc = _num_clusters * _coef_per_cluster; 
+    int fixed_macc = 0;
+    // First, lets just add all the regular multipliers
+    fixed_macc += num_point_clusters() * 1;
+    fixed_macc += num_full_clusters()  * _coef_per_cluster; 
+
+    // Now lets add in doppler
     fixed_macc += _num_flexible_clusters * _coef_per_cluster;
+    fixed_macc += num_point_clusters(); //don't multiply, cause only one coefficient
+
+    // Multiply out to get the area
     area += fixed_macc * (1.0/_t->int_macc_per_mm2()) * SCALAR_MACC_PER_COMPLEX_MACC;
 
-    // These are FP ops for doppler + aggregating clusters
-    // This is a bit conservative, since uneeb said that we don't need FP for this
+    // Now we add in some FP ops for aggregating clusters
     int fp_macc = _num_clusters;
-    area += fp_macc * (1.0/_t->fp_macc_per_mm2()) * SCALAR_MACC_PER_COMPLEX_MACC;
+    area += fp_macc * (1.0/_t->fp_macc_per_mm2()) * SCALAR_MACC_PER_COMPLEX_ADD;
 
     return area;
   }
@@ -250,6 +276,8 @@ public:
   float _mem_ratio=-1;
 
   bool _is_dyn_reconfig=false;
+
+  bool _stat_max_platforms_found=0; // max platforms 
 };
 
 class drbe_wafer : public hw_unit {

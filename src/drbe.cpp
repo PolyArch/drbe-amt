@@ -8,6 +8,7 @@ static struct option long_options[] = {
     {"print-pareto",       no_argument,       nullptr, 'p',},
     {"challenge-scenario", no_argument,       nullptr, 'c',},
     {"num-scenarios",      required_argument, nullptr, 'n',},
+    {"easy-scenario",      no_argument,       nullptr, 'e',},
     {"verbose",            no_argument,       nullptr, 'v',},
     {"verbose-ge-info",    no_argument,       nullptr, 'g',},
     {"wafer-io",           no_argument,       nullptr, 'w',},
@@ -48,7 +49,7 @@ bool Band::increase_difficulty(int kind=-1) {
       }
       case 1: { //upgrade a fixed to a slow object
         if(_n_fixed - 1 < 0) break;
-        if(reflectors() +1 >= ScenarioGen::max_reflectors()) break;
+        if(reflectors() +1 >= ScenarioGen::reflectors()) break;
         _n_fixed -= 1;
         _n_slow += 1;
         recalculate_txrx();
@@ -64,7 +65,7 @@ bool Band::increase_difficulty(int kind=-1) {
       case 3: { //subtract a band
         if(_n_bands==1 || rand_bt(0,20)!=0) break; //rand check to make it less likely
         _n_bands--;
-        recalculate_txrx();
+
         return true;
       }
       case 4: { //avg_coef_per_obj
@@ -692,8 +693,14 @@ void evaluate_ppu(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer&
   stats.avg_coef_per_mm2 = total_coef / (total_ppus * ppu->area());
 }
 
+path_proc_unit* design_ppu_for_max_capability(drbe_wafer& w, bool dynamic_reconfig) {
+
+
+}
+
 path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafer& w,
                                          bool dynamic_reconfig) {
+
   PPUStats best_stats;
   path_proc_unit* best_ppu = NULL; //needs to be null so we don't delete a non-pointer
   float chiplet_area = w.chiplet_area();
@@ -806,11 +813,13 @@ int main(int argc, char* argv[]) {
   int num_scenarios=1000;
   bool limit_wafer_io=false;
   int chiplet_io_layer=2;
+  bool easy_scenario=false;
+
   string dump_file_name="";
   tech_params t;
 
   int opt;
-  while ((opt = getopt_long(argc, argv, "vgkdprcn:wl:f:", long_options, nullptr)) != -1) {
+  while ((opt = getopt_long(argc, argv, "vgkdprcn:wl:f:e", long_options, nullptr)) != -1) {
     switch (opt) {
       case 'd': direct_path=true; break;
       case 'c': challenge_scenario=true; break;
@@ -821,6 +830,7 @@ int main(int argc, char* argv[]) {
       case 'p': print_pareto = true; break;
       case 'n': num_scenarios = atoi(optarg); break;
       case 'w': limit_wafer_io = true; break;
+      case 'e': easy_scenario = true; break;
       case 'l': chiplet_io_layer = atoi(optarg); break;
       case 'f': dump_file_name = optarg; break;
       default: exit(1);
@@ -895,9 +905,8 @@ int main(int argc, char* argv[]) {
             fixed_platforms <= 300; fixed_platforms +=10){
     std::vector<Band> scene_vec;
     // Generate Scenarios
-    ScenarioGen::gen_scenarios(scene_vec, direct_path,aidp,
-                              challenge_scenario, num_scenarios,
-                              true, fixed_platforms);
+    ScenarioGen::gen_scenarios(scene_vec, direct_path, aidp,
+                               num_scenarios, fixed_platforms, !easy_scenario);
 
     // record the target wafer
     for(auto & b : scene_vec){

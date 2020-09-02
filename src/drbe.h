@@ -8,7 +8,7 @@
 #include <iostream>
 #include <string>
 #include <algorithm>
-#include <dsp.h>
+#include "dsp.h"
 #include "hw.h"
 #include "util.h"
 #include <sstream>
@@ -294,14 +294,14 @@ class Band {
       printf("ppus_in_full_range: %d, mem_ratio %f\n",ppus_in_full_range,ppu._mem_ratio);
     }
 
-    int objects_contributed_per_ppu;
+    int objects_per_ppu;
     if(is_direct_path) {
       // also need to expand ppus_in_full_range due to i/o limitations
       // we're going to get _n_obj inputs
       int io_ppus_per_side = ceil((float)_n_obj / (float)ppu._output_router._in_degree);
       ppus_in_full_range = max(ppus_in_full_range, io_ppus_per_side * io_ppus_per_side);
 
-      objects_contributed_per_ppu = ceil(_n_obj/(float)ppus_in_full_range);
+      objects_per_ppu = ceil(_n_obj/(float)ppus_in_full_range);
     } else if(is_aidp) {
       // Similar constraint here due to _k_rcs_points to aggregate
       int io_ppus_per_side = ceil(_k_rcs_points / (float)ppu._output_router._in_degree);
@@ -312,7 +312,7 @@ class Band {
       //instead, we will convert to effective number of object
       float coef_required = _k_rcs_points * _coef_per_rcs_point;
       //compute the equivalent objects:
-      objects_contributed_per_ppu = ceil(coef_required/_avg_coef_per_object);
+      objects_per_ppu = ceil(coef_required/_avg_coef_per_object);
 
       // this will get multiplied out correctly later
       // Note also taht we don't both to split these up among ppus since we expect the
@@ -320,42 +320,68 @@ class Band {
 
     } else { // Tapped delay case
       if(ppu._is_dyn_reconfig) {
-       objects_contributed_per_ppu = 
+       objects_per_ppu = 
         ceil( (_n_obj)/(float)ppus_in_full_range);
       } else {
-       objects_contributed_per_ppu = 
+       objects_per_ppu = 
         ceil( (_n_obj - _n_full_range_obj)/(float)ppus_in_full_range) +
         _n_full_range_obj;
 
       }
     } 
 
-    int clutter_objects=0;
+    int full_clusters_per_ppu = 0;
+    int point_clusters_per_ppu = 0;
 
+    // These are normal objects
+    if(!just_clutter) {
+       objects_per_ppu * _avg_frac_full_objects+0.999f; //round up
+       objects_per_ppu - full_objects_per_ppu;
 
+    }
     if(clutter) {
-      clutter_objects=objects_contributed_per_ppu;
+      full_objects_per_ppu  += objects_per_ppu * _avg_frac_full_objects+0.999f;
+    }
+
+
+    // adjust for clutter -- clutter are always full objects
+    if(clutter) {
+      clutter_objects=objects_per_ppu;
       
       if(!just_clutter) { //if its not just clutter, then add these objects
-        objects_contributed_per_ppu+=clutter_objects;
+        objects_per_ppu+=clutter_objects;
+        full_objects_per_ppu+=clutter_objects;
       }
       if(verbose) {
         printf("Adding clutter; objects: %d, clutter objects: %d\n",
-            objects_contributed_per_ppu,clutter_objects);
+            objects_per_ppu,clutter_objects);
       }
     }
 
-    
+    int clusters_per_full_object = 
+                ceil((float)_avg_coef_per_object / (float)ppu._coef_per_cluster);  
+
+    int clusters_to_cover_full_objects = full_objects_per_ppu *
+                                         clusters_per_full_object;
+
+    int extra_clusters_required = clusters_to_cover_full_objects - ppu.num_full_clusters();
+    //if we don't need any more, then we're good, don't add a penalty
+    if(extra_clusters_required<0) {
+      clusters_to_cover_full_objects-=extra_clusters_required; //don't add twice below
+      extra_clusters_required=0; 
+    }
+
 
     // ciel: b/c coef_per_clust may be too large
-    int clusters_required_per_ppu_per_link = objects_contributed_per_ppu * 
-                        ceil((float)_avg_coef_per_object / (float)ppu._coef_per_cluster);  
+    int clusters_required_per_ppu_per_link = 
+      clusters_to_cover_full_objects+
+      extra_clusters_required * ppu._coef_per_cluster + 
+      point_objects_per_ppu;
+      
 
     // How many replicas do we need to make
     int obj_input_replication_factor = ceil(clusters_required_per_ppu_per_link 
                                         / (float)ppu._num_clusters);
-
-
 
     //how many flexible cluters do we require
     //1. if we are fast or slow, then we require clutter clusters to be flexible
@@ -381,7 +407,7 @@ class Band {
 
     if(verbose) {
       printf("obj/ppu/link %d, clusters/ppu/link : %d, obj input repl: %d\n",
-          objects_contributed_per_ppu, clusters_required_per_ppu_per_link, obj_input_replication_factor);
+          objects_per_ppu, clusters_required_per_ppu_per_link, obj_input_replication_factor);
       printf("h/w param -- clusters %d, flex clusters %d\n",
           ppu._num_clusters, ppu._num_flexible_clusters);
       printf("CLUTTER: obj/ppu/link %d, clutter input repl: %d\n", clutter_objects, 
@@ -452,7 +478,7 @@ class Band {
       frac_fast  = (float)(_n_fast) / ((float)_n_obj);
     }
 
-    float coef_per_ppu = num_links_sharing_ppu * objects_contributed_per_ppu * _avg_coef_per_object
+    float coef_per_ppu = num_links_sharing_ppu * objects_per_ppu * _avg_coef_per_object
                                     / total_ppus_considered;
 
     float avg_coef_bw=0; //average bandwidth in bits/ns
@@ -546,18 +572,7 @@ class Band {
       // n_tx and n_rx indicate the number of 
       // transmitters and receivers PER BAND
       _n_tx = ceil((float) platforms() / _n_bands);
-      _n_rx = ceil((float) platforms() / _n_bands); 
-
-      // fix the ratio of fast object and object
-      _n_obj = 0.5 * _n_tx * _n_bands; //CASE: nominal 25% worst 50%
-      _n_fast = _n_obj * 1.0; //CASE: nominal 50 % worst 100%
-      _n_slow = _n_obj - _n_fast;
-      _n_fixed = _n_fixed - _n_fast - _n_slow;
-
-      // objects in the scene that move are objects to model
-      // Other objects get lost in clutter
-      //_n_obj = _n_slow + _n_fast;
-      _n_full_range_obj = _n_fast;
+      _n_rx = ceil((float) platforms() / _n_bands) * 2; 
   }
 
   // ---------------- Geometry Engine -----------------
@@ -683,7 +698,15 @@ class Band {
 
   int _n_full_range_obj;
   int _avg_coef_per_object;
+  float _avg_frac_full_objects;
   int _range;
+
+  float _frac_clutter = 0.0;
+  float _low_update_period=1000000; //
+  float _high_update_period=10000; //clock cycles?
+
+  std::vector<float> _norm_features;
+
 
   // Wafer level
   int num_wafer = 0; // number of wafer that required to support this scenario
@@ -693,17 +716,12 @@ class Band {
   // chiplet level
   float chiplet_io_layer = 0.0;
 
-  float _low_update_period=1000000; //
-  float _high_update_period=10000; //clock cycles?
   // Compute Area needed
   int num_ppu_chiplet = 0;
   int num_ge_chiplet = 0;
-  float _frac_clutter = 0.0;
 
   // Geometry Engine Tradeoff
   single_band_ge_stats ge_stat;
-
-  std::vector<float> _norm_features;
 };
 
 
@@ -711,70 +729,86 @@ class ScenarioGen {
 
   public:
   static void gen_scenarios(std::vector<Band>& scene_vec, bool direct_path, bool aidp,
-      bool challenge_scenario, int num_scenarios,
-      bool is_platform_fixed, int fixed_platforms) {
+      int num_scenarios, int fixed_platforms=0, bool hard_ratio=true) {
 
-    if(challenge_scenario) {
+    if(num_scenarios<=1) {
       Band b;
-      b._n_fixed = max_platforms() -  max_reflectors();
-      b._n_slow = 0;
-      b._n_fast = max_reflectors();
-      b._n_bands = 1;
+      int platforms=max_platforms();
+      if(fixed_platforms) {
+        platforms=fixed_platforms;
+      }
+
+      // Number of platforms of each type
+      if(hard_ratio) {
+        b._n_fast  = platforms;
+        b._n_slow  = 0;
+        b._n_fixed = 0;
+
+        b._high_update_period = 5000; //5us
+        b._range=max_range();
+
+        b._n_bands = 1;
+
+        b._n_obj = 100;
+
+      } else {
+        b._n_fast  = 0.5 * platforms;
+        b._n_slow  = platforms - b._n_fast;
+        b._n_fixed = 0;
+
+        b._high_update_period = 10000; //5us
+        b._range=max_range();
+
+        b._n_bands = 2;
+
+        b._n_obj = 10;
+      }
+
       b.recalculate_txrx();
       b._avg_coef_per_object = 60;
+      b._avg_frac_full_objects=0.05;
+
       b._n_full_range_obj = b._n_fast;
-      b._range=max_range();
-      b._high_update_period = 10000; //10us
+        
       b._is_direct_path=direct_path;
       b._is_aidp=aidp;
+
       scene_vec.emplace_back(b); 
 
       num_scenarios=0; //set to zero
     }
 
-    // Scenario Generation
+    // Scenario Generation -- this is for random scenarios only
     for(int i_scene = 0; i_scene < num_scenarios; i_scene++) {
       Band b;
-      int platforms;
-      if(is_platform_fixed){
-        platforms = fixed_platforms;
-      }else{
-        platforms = rand_rng(min_platforms(),max_platforms());
-      }
-      /* Sihao comment out for purpose of generating channel model (fix ratio)
-      int max_rand_reflect = min(max_reflectors(),platforms);
-      int num_reflectors = rand_rng(1,max_rand_reflect);
-
-      int slow = rand_rng(0,num_reflectors);
-      */
       b._is_direct_path=direct_path;
       b._is_aidp=aidp;
 
-      // assume all object is fixed first, will be adjusted in b.recalculate_txrx();
-      b._n_fixed = platforms;
-      b._n_fast = 0;
-      b._n_slow = 0;
-      assert(b._n_fixed>=0);
-  
-      b._n_bands = 1;//CASE: nominal 2 worst 1
-                    //rand_rng(min_bands(),max_bands());
+      int platforms = rand_rng(min_platforms(),max_platforms());
+
+      int x = rand_rng(0,platforms);
+      int y = rand_rng(1,platforms);
+      if(x>y) std::swap(x,y);
+      
+      b._n_fixed = x;
+      b._n_slow = y;
+      b._n_fast = platforms-y;
 
       b.recalculate_txrx();
-      //fix the coef per object to be 60 CASE:
-      b._avg_coef_per_object = 60;//(rand_rng(min_coef_per_obj(),max_coef_per_obj()) / 4) * 4;
+
+      b._n_bands = rand_rng(min_bands(),max_bands());
+
+      b._n_obj = rand_rng(min_objects(),max_objects());
+
+      b._avg_coef_per_object = (rand_rng(min_coef_per_obj(),max_coef_per_obj()) / 10) * 10;
+      b._avg_frac_full_objects=rand_rng(min_full_obj()*1000,max_full_obj()*1000)/1000.0;
+
       b._n_full_range_obj = b._n_fast;
-      b._range = 500;//CASE: nominal 250 worst 500
-              //(rand_rng(min_range(),max_range())/10)*10;
+      b._range = (rand_rng(min_range(),max_range())/10)*10;
       
-      b._high_update_period = 10000;//rand_rng(10000 /*10us*/,100000 /*100us*/);
+      b._high_update_period = rand_rng(5000 /*5us*/,100000 /*100us*/);
 
-      b._frac_clutter=0.3;  //CASE: nominal 0.1 worst 0.3
-              //rand_rng(min_clutter(),max_clutter())/100.0f;
-
-      for(int i = 0; i < 100; ++i) {
-        //b.increase_difficulty(1);
-        //b.increase_difficulty(2); //upgrade slow to fast
-      }
+      b._frac_clutter = rand_rng(min_clutter(),max_clutter())/100.0f;
 
   /*
       printf("Stationary obj: %d, Slow Obj: %d, Fast Obj: %d, bands %d,  \
@@ -782,8 +816,19 @@ class ScenarioGen {
           b._n_fixed, b._n_slow, b._n_fast, b._n_bands, 
           b._avg_coef_per_object, b._range, b._high_update_period);
   */
-      scene_vec.emplace_back(b);
+      if(scenario_is_between_threshold_and_objective(b)) {
+        scene_vec.emplace_back(b);
+      }
     }
+  }
+
+  static bool scenario_is_between_threshold_and_objective(Band& b) {
+    if(b.num_links() < 6400 || b.num_links() > 40000) return false;
+    float avg_coef_per_link = (b._avg_coef_per_object * b._avg_frac_full_objects +
+                               1.0f              * (1 - b._avg_frac_full_objects)) * b._n_obj;
+    if(avg_coef_per_link < 70) return false;
+    if(avg_coef_per_link > 200) return false;
+    return true;
   }
 
   // Define the geometry engine fidelity
@@ -814,16 +859,25 @@ class ScenarioGen {
   }
 
   //const static int clutter_links=0;
-  static int min_platforms   () {return min(max_platforms(),80);}
+  static int min_platforms   () {return 80;}
   static int max_platforms   () {return 200;}
-  static int max_reflectors  () {return min(max_platforms(),100);}
+
+  static int min_objects     () {return 10;} //threshold (obj/link)
+  static int max_objects     () {return 100;} //objective
+
   static int min_bands       () {return 1;}
   static int max_bands       () {return 4;}
-  static int min_coef_per_obj() {return 20;}
-  static int max_coef_per_obj() {return 60;}
-  static int min_range       () {return 50;}
+
+  static int min_coef_per_obj() {return  20;}
+  static int max_coef_per_obj() {return 100;}
+
+  static int min_range       () {return 50;} // in km
   static int max_range       () {return 500;}
+
   static int min_clutter     () {return 0;}
   static int max_clutter     () {return 30;}
+
+  static float min_full_obj  () {return 0;}
+  static float max_full_obj  () {return 0.05;}
 };
 
