@@ -12,6 +12,7 @@
 #include "hw.h"
 #include "util.h"
 #include <sstream>
+#include <tuple>
 
 // compute, memory, bandwidth, latency
 struct cmbl{
@@ -92,6 +93,8 @@ struct single_band_ge_stats {
 class Band {
   public:
 
+  static float average_clutter(std::vector<Band>);
+
   //int _tdl_max_systems_per_wafer=0;
   //int _aidp_max_systems_per_wafer=0;
   //int _dp_max_systems_per_wafer=0;
@@ -121,9 +124,10 @@ class Band {
   //This only thinks about inputs, since outputs are similar
   float max_systems_per_wafer(int wafer_inputs) { 
     if(_is_direct_path) {
-      return wafer_inputs / (float)(max(_n_obj-1,1)); 
+      return wafer_inputs / (float)(max(_n_tx-1,1)); 
     } else if (_is_aidp) {
-      return wafer_inputs / _k_rcs_points;
+      //multiply by 1.25 just to be conservative, got help us if we get this wrong
+      return wafer_inputs / (1 + (_k_rcs_points-1)* _avg_frac_full_objects * 1.25);
     } else {
       return wafer_inputs;
     }
@@ -160,9 +164,8 @@ class Band {
     //         Slow  | slow       slow      fast
     //         Fast  | fast       fast      fast
 
-    int n_platform = _n_fixed + _n_obj;
-    float frac_fixed = (float)(_n_fixed)/((float)n_platform);
-    float frac_slow  = (float)(_n_slow) /((float)n_platform);
+    float frac_fixed = (float)(_n_fixed)/((float)platforms());
+    float frac_slow  = (float)(_n_slow) /((float)platforms());
     //float frac_fast  = (float)(_n_fast)/((float)n_platform);
 
     float frac_txrx_fixed=frac_fixed * frac_fixed;
@@ -263,6 +266,25 @@ class Band {
   }
               
 
+  int map_cluster_resources(int full_clusters_per_ppu, int point_clusters_per_ppu,
+                            path_proc_unit& ppu, int input_replication_factor,
+                            int num_links_sharing_ppu) {
+      int extra_full_clusters_required = full_clusters_per_ppu * num_links_sharing_ppu -  
+                                         ppu.num_full_clusters() * input_replication_factor;
+      int remaining_ppu_full_clusters=0;
+      //if we don't need any more, then we're good, don't add a penalty
+      if(extra_full_clusters_required<0) {
+        remaining_ppu_full_clusters=-extra_full_clusters_required; //don't add twice below
+        extra_full_clusters_required=0; 
+      }
+      
+      int extra_point_clusters_required = point_clusters_per_ppu * num_links_sharing_ppu +
+                                          extra_full_clusters_required * ppu._coef_per_cluster -
+                                          ppu.num_point_clusters() * input_replication_factor -
+                                          remaining_ppu_full_clusters;
+      return extra_point_clusters_required;
+  }
+
   //fast==0 (fixed), fast==1
   float calc_links_per_ppu(path_proc_unit& ppu, drbe_wafer& wafer, 
                      bool is_direct_path, bool is_aidp,
@@ -298,9 +320,10 @@ class Band {
     if(is_direct_path) {
       // also need to expand ppus_in_full_range due to i/o limitations
       // we're going to get _n_obj inputs
-      int io_ppus_per_side = ceil((float)_n_obj / (float)ppu._output_router._in_degree);
+      int io_ppus_per_side = ceil((float)_n_tx / (float)ppu._output_router._in_degree);
       ppus_in_full_range = max(ppus_in_full_range, io_ppus_per_side * io_ppus_per_side);
 
+      //objects are split up among these ppus
       objects_per_ppu = ceil(_n_obj/(float)ppus_in_full_range);
     } else if(is_aidp) {
       // Similar constraint here due to _k_rcs_points to aggregate
@@ -326,128 +349,71 @@ class Band {
        objects_per_ppu = 
         ceil( (_n_obj - _n_full_range_obj)/(float)ppus_in_full_range) +
         _n_full_range_obj;
-
       }
     } 
 
     int full_clusters_per_ppu = 0;
     int point_clusters_per_ppu = 0;
 
-    // These are normal objects
-    if(!just_clutter) {
-       objects_per_ppu * _avg_frac_full_objects+0.999f; //round up
-       objects_per_ppu - full_objects_per_ppu;
-
-    }
-    if(clutter) {
-      full_objects_per_ppu  += objects_per_ppu * _avg_frac_full_objects+0.999f;
-    }
-
-
-    // adjust for clutter -- clutter are always full objects
-    if(clutter) {
-      clutter_objects=objects_per_ppu;
-      
-      if(!just_clutter) { //if its not just clutter, then add these objects
-        objects_per_ppu+=clutter_objects;
-        full_objects_per_ppu+=clutter_objects;
-      }
-      if(verbose) {
-        printf("Adding clutter; objects: %d, clutter objects: %d\n",
-            objects_per_ppu,clutter_objects);
-      }
-    }
+    int full_obj = objects_per_ppu * _avg_frac_full_objects+0.999f; //round up
+    int point_obj = objects_per_ppu - full_obj;
 
     int clusters_per_full_object = 
                 ceil((float)_avg_coef_per_object / (float)ppu._coef_per_cluster);  
 
-    int clusters_to_cover_full_objects = full_objects_per_ppu *
-                                         clusters_per_full_object;
-
-    int extra_clusters_required = clusters_to_cover_full_objects - ppu.num_full_clusters();
-    //if we don't need any more, then we're good, don't add a penalty
-    if(extra_clusters_required<0) {
-      clusters_to_cover_full_objects-=extra_clusters_required; //don't add twice below
-      extra_clusters_required=0; 
+    // These are normal objects
+    if(!just_clutter) {
+       full_clusters_per_ppu += full_obj * clusters_per_full_object; 
+       point_clusters_per_ppu += point_obj;
+    }
+    if(clutter) {
+      full_clusters_per_ppu  += full_obj * clusters_per_full_object; 
+      full_clusters_per_ppu  += point_obj;  // not a typo, we use a full cluster for one point obj
     }
 
+    int input_replication_factor = ceil((float)full_clusters_per_ppu / 
+                                        (float)ppu.num_full_clusters())-1;
 
-    // ciel: b/c coef_per_clust may be too large
-    int clusters_required_per_ppu_per_link = 
-      clusters_to_cover_full_objects+
-      extra_clusters_required * ppu._coef_per_cluster + 
-      point_objects_per_ppu;
-      
+    bool found_valid_repl_factor=false;
+    int num_links_sharing_ppu=1;
 
-    // How many replicas do we need to make
-    int obj_input_replication_factor = ceil(clusters_required_per_ppu_per_link 
-                                        / (float)ppu._num_clusters);
+    while(found_valid_repl_factor==false) {
+      input_replication_factor++;
 
-    //how many flexible cluters do we require
-    //1. if we are fast or slow, then we require clutter clusters to be flexible
-    //2. if we are fixed, no clutter clusters need to be flexible
-
-    int clutter_input_replication_factor = 0;
-  
-    int clutter_clusters_required_per_ppu_per_link=0;
-    if(clutter && speed_txrx!=0) { //if not fixed txrx
-      // We're goint to need flexible clusters...
-      clutter_clusters_required_per_ppu_per_link = clutter_objects * 
-                          ceil((float)_avg_coef_per_object / (float)ppu._coef_per_cluster);  
-
-      // How many replicas do we need to make
-      clutter_input_replication_factor = ceil(clutter_clusters_required_per_ppu_per_link 
-                                          / (float)ppu.num_flexible_clusters());
-    }
-
-
-    int input_replication_factor = max(obj_input_replication_factor,
-                                     clutter_input_replication_factor);
-
+      int extra_point_clusters_required = 
+        map_cluster_resources(full_clusters_per_ppu, point_clusters_per_ppu, ppu,
+                              input_replication_factor, num_links_sharing_ppu);
+    
+      if(extra_point_clusters_required <= 0) {
+        found_valid_repl_factor = true;
+      }      
+    } 
 
     if(verbose) {
       printf("obj/ppu/link %d, clusters/ppu/link : %d, obj input repl: %d\n",
-          objects_per_ppu, clusters_required_per_ppu_per_link, obj_input_replication_factor);
+          objects_per_ppu, full_clusters_per_ppu, input_replication_factor);
       printf("h/w param -- clusters %d, flex clusters %d\n",
           ppu._num_clusters, ppu._num_flexible_clusters);
-      printf("CLUTTER: obj/ppu/link %d, clutter input repl: %d\n", clutter_objects, 
-          clutter_input_replication_factor);
     }
-
 
     assert(input_replication_factor > 0);
 
-    //if(clusters_required_per_ppu_per_link > ppu._num_clusters) return 0;
 
-    //Redistributed the links in integer number of PPUS
-    int obj_comp_constrainted_links_per_ppu = 
-      input_replication_factor * ppu._num_clusters / clusters_required_per_ppu_per_link;
+    if(!is_direct_path && !is_aidp) {
+      //then we can potentially jam multiple links per PPU
 
-    int comp_constrainted_links_per_ppu;
-
-    if(clutter && speed_txrx!=0) {
-      int clutter_comp_constrained_links_per_ppu = 
-        clutter_input_replication_factor * 
-        ppu._num_flexible_clusters / clutter_clusters_required_per_ppu_per_link;
-
-        comp_constrainted_links_per_ppu = min(obj_comp_constrainted_links_per_ppu,
-                                                  clutter_comp_constrained_links_per_ppu);
-    } else {
-        comp_constrainted_links_per_ppu = obj_comp_constrainted_links_per_ppu;
-    }
-   
-    assert(comp_constrainted_links_per_ppu >= 1);
-      
-      
+      for(; num_links_sharing_ppu < ppu._output_router._in_degree; num_links_sharing_ppu++) {
         
+        int extra_point_clusters_required = 
+        map_cluster_resources(full_clusters_per_ppu, point_clusters_per_ppu, ppu,
+                              input_replication_factor, num_links_sharing_ppu);
 
-
-    //TODO: for now i don't think its worth it to consider multiple links sharing the same
-    //PPU for a direct-path model, b/c the I/O will almost always be the constraint.
-    //similar reasoning for scatter sep, except the limitation is just memory
-    int max_sharing_factor = (is_direct_path || is_aidp) ? 1 : ppu._output_router._in_degree;
-
-    int num_links_sharing_ppu = min(max_sharing_factor,comp_constrainted_links_per_ppu);
+        if(extra_point_clusters_required > 0) {
+          num_links_sharing_ppu--; //go back one : )
+          break;
+        }
+      }
+    }
 
     int total_ppus_considered = ppus_in_full_range * input_replication_factor;
 
@@ -455,10 +421,14 @@ class Band {
     // Note the following:
     // Fast moving objects get charged the high-update rate (others, the slow). 
     // Dynamically, we only need to send updates for actual coefficients.
-   
+
+    float avg_coef_per_object = _avg_coef_per_object * _avg_frac_full_objects +
+                                1 * (1-_avg_frac_full_objects);
+
     float metadata_size = 32;  //metatdata bits per coef
     float coef_size = 32; //bits per coefficient
-    float update_bits_per_coef = coef_size + metadata_size / (float)ppu._coef_per_cluster;
+    float doppler_coef_size = 32; //bits per coefficient
+    float update_bits_per_coef = coef_size + metadata_size / avg_coef_per_object;
     //coef_bandwith in bit/cyc
 
     // If Either the source or destination is a fast object, then
@@ -467,7 +437,21 @@ class Band {
     //                -----------------------------
     //         Slow  | slow       fast
     //         Fast  | fast       fast
+                                 
 
+    float full_clusters_per_ppu_total = (float) full_clusters_per_ppu * num_links_sharing_ppu / 
+                                        (float) input_replication_factor;
+
+    float point_clusters_per_ppu_total = (float) point_clusters_per_ppu * num_links_sharing_ppu / 
+                                         (float) input_replication_factor;
+
+    float full_coef_bits_per_ppu = full_clusters_per_ppu_total * 
+          (metadata_size + (coef_size + doppler_coef_size)  * ppu._coef_per_cluster);
+                                   
+    float point_coef_bits_per_ppu = point_clusters_per_ppu_total * 
+          (metadata_size + coef_size + doppler_coef_size);
+
+    float total_coef_bits_per_ppu = full_coef_bits_per_ppu + point_coef_bits_per_ppu;
 
     float frac_slow, frac_fast;
     if(speed_txrx==2) { //FAST sees all as fast
@@ -478,14 +462,9 @@ class Band {
       frac_fast  = (float)(_n_fast) / ((float)_n_obj);
     }
 
-    float coef_per_ppu = num_links_sharing_ppu * objects_per_ppu * _avg_coef_per_object
-                                    / total_ppus_considered;
-
-    float avg_coef_bw=0; //average bandwidth in bits/ns
-    // First add in the slow bits contribution
-    //printf("fixed, fast, slow: %f, %f, %f\n", frac_fixed * frac_fixed, frac_coef_slow, frac_coef_fast);
-    avg_coef_bw += coef_per_ppu * update_bits_per_coef * frac_slow / _low_update_period;
-    avg_coef_bw += coef_per_ppu * update_bits_per_coef * frac_fast / _high_update_period;
+    float avg_coef_bw =0; //average bandwidth in bits/ns
+    avg_coef_bw += total_coef_bits_per_ppu * frac_slow / _low_update_period;
+    avg_coef_bw += total_coef_bits_per_ppu * frac_fast / _high_update_period;
 
     // with the above coef bandwidth, and the max input bandwidth, compute the maximum
     // depth we can send coefficients without losing bandwidth
@@ -518,7 +497,6 @@ class Band {
     return total_links;
   }
 
-
   int num_links() {
     int links_per_band;
     if(_is_direct_path || _is_aidp) {
@@ -532,6 +510,17 @@ class Band {
     return total_links;
   }
 
+  float frac_fast() {
+    if(platforms()==0) return 0;
+    return _n_fast / platforms();
+  }
+
+
+  float link_complexity() {
+    float avg_coef_per_link = (_avg_coef_per_object * _avg_frac_full_objects +
+                               1.0f              * (1 - _avg_frac_full_objects)) * _n_obj;
+    return avg_coef_per_link;
+  }
 
 
   int platforms() {
@@ -546,12 +535,16 @@ class Band {
     return _n_tx * _n_rx * reflectors() * _n_bands;
   }
 
+  //TODO UPDATE THIS
   bool could_be_harder_than(Band& other) {
     if(platforms() > other.platforms()) return true;
-    if(reflectors() > other.reflectors()) return true;
-    if(_n_bands < other._n_bands) return true;
+    //if(reflectors() > other.reflectors()) return true;
+    //if(_n_bands < other._n_bands) return true;
+    if(num_links() > other.num_links()) return true;
+    if(_avg_frac_full_objects > other._avg_frac_full_objects) return true; 
     if(_avg_coef_per_object > other._avg_coef_per_object) return true;
-    if(_n_fast > other._n_fast) return true;
+    if(frac_fast() > other.frac_fast()) return true;
+    if(_frac_clutter > other._frac_clutter) return true;
     if(_range > other._range) return true;
     return false;
   }
@@ -561,10 +554,11 @@ class Band {
   std::vector<float>& normalized_vec();
 
 
-  void print_csv() {
-    printf("%d, %d, %d, %d, %d, %d", platforms(), reflectors(),
-        _n_bands, _avg_coef_per_object, _n_fast, _range);
-  }
+  void print_csv();
+  //void print_csv() {
+  //  printf("%d, %d, %d, %d, %d, %d", platforms(), reflectors(),
+  //      _n_bands, _avg_coef_per_object, _n_fast, _range);
+  //}
 
   void print_norm_csv();
 
@@ -574,6 +568,10 @@ class Band {
       _n_tx = ceil((float) platforms() / _n_bands);
       _n_rx = ceil((float) platforms() / _n_bands) * 2; 
   }
+
+   // TODO/FIXME: This code is not in the right place
+   // Please separate a statistics datastructure for the Geometry engine
+   // PPU also has a separate stats structure
 
   // ---------------- Geometry Engine -----------------
   // Coordinate Translation
@@ -615,11 +613,11 @@ class Band {
       << platforms() << ", "
       // wafer-level
       << num_wafer << ", "
-      << target_num_wafer <<", "
-      << wafer_io_limit << ", "
-      << tech_scaling << ", "
+//      << target_num_wafer <<", "
+//      << wafer_io_limit << ", "
+//      << tech_scaling << ", "
       // chiplet level
-      << chiplet_io_layer << ", "
+//      << chiplet_io_layer << ", "
       // Clutter
       << _frac_clutter << ", "
       // Size
@@ -707,7 +705,9 @@ class Band {
 
   std::vector<float> _norm_features;
 
-
+  // TODO/FIXME:  This is messy,  please remove and place in its own
+  // statistics datastructure, please!
+  
   // Wafer level
   int num_wafer = 0; // number of wafer that required to support this scenario
   int target_num_wafer = 0; // the number of wafer we want for this scenario
@@ -722,6 +722,7 @@ class Band {
 
   // Geometry Engine Tradeoff
   single_band_ge_stats ge_stat;
+
 };
 
 
@@ -741,7 +742,7 @@ class ScenarioGen {
       // Number of platforms of each type
       if(hard_ratio) {
         b._n_fast  = platforms;
-        b._n_slow  = 0;
+        b._n_slow  = platforms - b._n_fast;
         b._n_fixed = 0;
 
         b._high_update_period = 5000; //5us
@@ -751,27 +752,32 @@ class ScenarioGen {
 
         b._n_obj = 100;
 
+        b._avg_frac_full_objects=0.05;
+
       } else {
-        b._n_fast  = 0.5 * platforms;
+        b._n_fast  = platforms;
         b._n_slow  = platforms - b._n_fast;
         b._n_fixed = 0;
 
-        b._high_update_period = 10000; //5us
+        b._high_update_period = 5000; //5us
         b._range=max_range();
 
-        b._n_bands = 2;
+        b._n_bands = 1;
 
-        b._n_obj = 10;
+        b._n_obj = 20;
+
+        b._avg_frac_full_objects=0.33; //needs to be higher to meet the link_complexity
       }
 
       b.recalculate_txrx();
       b._avg_coef_per_object = 60;
-      b._avg_frac_full_objects=0.05;
 
       b._n_full_range_obj = b._n_fast;
         
       b._is_direct_path=direct_path;
       b._is_aidp=aidp;
+
+      b._frac_clutter=0.1;
 
       scene_vec.emplace_back(b); 
 
@@ -794,9 +800,9 @@ class ScenarioGen {
       b._n_slow = y;
       b._n_fast = platforms-y;
 
-      b.recalculate_txrx();
-
       b._n_bands = rand_rng(min_bands(),max_bands());
+
+      b.recalculate_txrx();
 
       b._n_obj = rand_rng(min_objects(),max_objects());
 
@@ -808,7 +814,7 @@ class ScenarioGen {
       
       b._high_update_period = rand_rng(5000 /*5us*/,100000 /*100us*/);
 
-      b._frac_clutter = rand_rng(min_clutter(),max_clutter())/100.0f;
+      b._frac_clutter = rand_rng(min_clutter()*1000,max_clutter()*1000)/1000.0f;
 
   /*
       printf("Stationary obj: %d, Slow Obj: %d, Fast Obj: %d, bands %d,  \
@@ -818,16 +824,19 @@ class ScenarioGen {
   */
       if(scenario_is_between_threshold_and_objective(b)) {
         scene_vec.emplace_back(b);
+      } else {
+        i_scene--;
       }
     }
   }
 
   static bool scenario_is_between_threshold_and_objective(Band& b) {
-    if(b.num_links() < 6400 || b.num_links() > 40000) return false;
-    float avg_coef_per_link = (b._avg_coef_per_object * b._avg_frac_full_objects +
-                               1.0f              * (1 - b._avg_frac_full_objects)) * b._n_obj;
-    if(avg_coef_per_link < 70) return false;
-    if(avg_coef_per_link > 200) return false;
+    if(b.num_links() < min_links() || b.num_links() > max_links()) return false;
+
+//    if(b.link_complexity() < min_coef_per_link()) return false;
+    if(b.link_complexity() > overprov_link_complexity()) {
+      return false;
+    }
     return true;
   }
 
@@ -858,9 +867,17 @@ class ScenarioGen {
     }
   }
 
+  static int overprov_link_complexity() { return 2*max_coef_per_link();} //Arbitrary constant
+
   //const static int clutter_links=0;
   static int min_platforms   () {return 80;}
   static int max_platforms   () {return 200;}
+
+  static int min_coef_per_link       () {return 70;}
+  static int max_coef_per_link       () {return 200;}
+
+  static int min_links       () {return 6400;}
+  static int max_links       () {return 40000;}
 
   static int min_objects     () {return 10;} //threshold (obj/link)
   static int max_objects     () {return 100;} //objective
@@ -874,10 +891,10 @@ class ScenarioGen {
   static int min_range       () {return 50;} // in km
   static int max_range       () {return 500;}
 
-  static int min_clutter     () {return 0;}
-  static int max_clutter     () {return 30;}
+  static float min_clutter     () {return 0;}
+  static float max_clutter     () {return 0.1;}
 
   static float min_full_obj  () {return 0;}
-  static float max_full_obj  () {return 0.05;}
+  static float max_full_obj  () {return 0.3;}
 };
 

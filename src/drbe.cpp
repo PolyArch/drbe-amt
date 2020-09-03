@@ -1,19 +1,26 @@
 #include "drbe.h"
 using namespace std;
 
+enum analysis {
+  ANALYSIS_PARETO=128,
+  ANALYSIS_WAFER_SCALING
+};
+
 static struct option long_options[] = {
     {"direct-path",        no_argument,       nullptr, 'd',},
     {"kp-aidp",            no_argument,       nullptr, 'k',},
     {"dynamic-reconfig",   no_argument,       nullptr, 'r',},
-    {"print-pareto",       no_argument,       nullptr, 'p',},
     {"challenge-scenario", no_argument,       nullptr, 'c',},
     {"num-scenarios",      required_argument, nullptr, 'n',},
+    {"target-wafers",      required_argument, nullptr, 't',},
     {"easy-scenario",      no_argument,       nullptr, 'e',},
     {"verbose",            no_argument,       nullptr, 'v',},
     {"verbose-ge-info",    no_argument,       nullptr, 'g',},
     {"wafer-io",           no_argument,       nullptr, 'w',},
     {"layer",              required_argument, nullptr, 'l',},
     {"dump-file-name",     required_argument, nullptr, 'f',},
+    {"print-pareto",       no_argument,       nullptr, ANALYSIS_PARETO},
+    {"print-wafer-scaling",no_argument,       nullptr, ANALYSIS_WAFER_SCALING},
     {0, 0, 0, 0,},
 };
 
@@ -30,32 +37,40 @@ float Band::normalized_distance_to(Band &other) {
 
 bool Band::increase_difficulty(int kind=-1) {
 
-  int which = rand_bt(0,6);
-  int max_types=6;
+  int max_types=9;
+  int which = rand_bt(0,max_types);
 
   if(kind!=-1) {
     which=kind;
     max_types=1;
   }
 
-  for(int i = 0; i < max_types; ++i,which=(which+1)%6) {
+  assert(num_links() <= ScenarioGen::max_links());
+
+  for(int i = 0; i < max_types; ++i,which=(which+1)%max_types) {
 
     switch(which) {
-      case 0: { //add a fixed object
+      case 0: { //add a fixed platform
         if(platforms() + 1 >ScenarioGen::max_platforms()) break;
         _n_fixed+=1; //one object per band
         recalculate_txrx();
-        return true;
+
+        if(ScenarioGen::scenario_is_between_threshold_and_objective(*this)) {
+          return true;
+        } else {
+          _n_fixed -=1;
+          recalculate_txrx();
+        } 
+
       }
-      case 1: { //upgrade a fixed to a slow object
+      case 1: { //upgrade a fixed platform to slow platform
         if(_n_fixed - 1 < 0) break;
-        if(reflectors() +1 >= ScenarioGen::reflectors()) break;
         _n_fixed -= 1;
         _n_slow += 1;
         recalculate_txrx();
         return true;
       }
-      case 2: { //upgrade a slow to a fast object
+      case 2: { //upgrade a slow platform to fast platform
         if(_n_slow - 1 < 0) break;
         _n_slow -= 1;
         _n_fast += 1;
@@ -64,44 +79,86 @@ bool Band::increase_difficulty(int kind=-1) {
       }
       case 3: { //subtract a band
         if(_n_bands==1 || rand_bt(0,20)!=0) break; //rand check to make it less likely
-        _n_bands--;
 
-        return true;
+        _n_bands--;
+        recalculate_txrx();
+
+        if(ScenarioGen::scenario_is_between_threshold_and_objective(*this)) {
+          return true;
+        } else {
+          _n_bands++;
+          recalculate_txrx();
+        } 
       }
       case 4: { //avg_coef_per_obj
         if(_avg_coef_per_object +1 > ScenarioGen::max_coef_per_obj()) break;
         _avg_coef_per_object+=1;
-        return true;
+        if(ScenarioGen::scenario_is_between_threshold_and_objective(*this)) {
+          return true;
+        } else {
+          _avg_coef_per_object-=1;
+        } 
       }
       case 5: { //range
         if(_range + 10 > ScenarioGen::max_range()) break;
         _range+=10;
         return true;
       }
+      case 6: { // more objects
+        if(_n_obj + 1 > ScenarioGen::max_objects()) break;
+        _n_obj += 1;
+        if(ScenarioGen::scenario_is_between_threshold_and_objective(*this)) {
+          return true;
+        } else {
+          _n_obj -=1;
+        } 
+      }
+      case 7: { // more clutter
+        if(_frac_clutter + 0.01 > ScenarioGen::max_clutter()) break;
+        _frac_clutter += 0.01;
+        return true;
+      }
+      case 8: { // more link complexity
+        _avg_frac_full_objects += 0.001;
+        if(ScenarioGen::scenario_is_between_threshold_and_objective(*this)) {
+          return true;
+        } else {
+          _avg_frac_full_objects -= 0.001;
+        } 
+      }
+      assert(num_links() <= ScenarioGen::max_links());
     }
   }
   return false;
 }
 
-  void Band::print_norm_csv() {
-    printf("%0.3f, %0.3f, %0.3f, %0.3f, %0.3f, %0.3f", 
-        platforms() / (float) ScenarioGen::max_platforms(), 
-        reflectors() / (float)ScenarioGen::max_platforms(),
-        _n_fast / (float)ScenarioGen::max_platforms(), 
-        1.0/(float)_n_bands, 
-        _avg_coef_per_object / (float)ScenarioGen::max_coef_per_obj(), 
-        _range / (float)ScenarioGen::max_range());
+void Band::print_norm_csv() {
+  static bool printed = false;
+  if(!printed) {
+    printf("Links, Tap/Link, Fast, %%Clutter, Range\n");
+    printed=true;
   }
 
+  printf("%0.3f, %0.3f, %0.3f, %0.3f, %0.3f", 
+    num_links() / (float)ScenarioGen::max_links(),
+    link_complexity() / (float)ScenarioGen::overprov_link_complexity(),
+    _n_fast / (float)platforms(),
+    _frac_clutter / (float)ScenarioGen::max_clutter(),
+    _range / (float)ScenarioGen::max_range()
+  );
+}
 
+void Band::print_csv() {
+  printf("%3d, %0.3f, %0.3f, %0.3f, %3d", 
+    num_links(),link_complexity(),_n_fast/(float)ScenarioGen::max_platforms(),_frac_clutter, _range);
+}
 
 std::vector<float>& Band::normalized_vec() {
   if(_norm_features.size()==0) {
-    _norm_features.push_back(platforms() / (float)ScenarioGen::max_platforms());
-    _norm_features.push_back(reflectors() / (float)ScenarioGen::max_platforms());
-    _norm_features.push_back(1.0 / (float)_n_bands);
-    _norm_features.push_back(_avg_coef_per_object / (float)ScenarioGen::max_coef_per_obj());
-    _norm_features.push_back(_n_fast / (float)ScenarioGen::max_platforms());
+    _norm_features.push_back(num_links() / (float)ScenarioGen::max_links());
+    _norm_features.push_back(link_complexity() / (float)ScenarioGen::overprov_link_complexity());
+    _norm_features.push_back(_n_fast / (float)platforms());
+    _norm_features.push_back(_frac_clutter / (float)ScenarioGen::max_clutter());
     _norm_features.push_back(_range / (float)ScenarioGen::max_range());
   }
   return _norm_features;
@@ -209,80 +266,80 @@ std::vector<float>& Band::normalized_vec() {
     fed_cmbl.relative_orientation.set_cmbl(C, M, B, L);
   }
   // Antenna Gain
-  void Band::antenna_gain_cmbl(single_band_ge_stats & fed_cmbl){
-    float no_antenna=fed_cmbl.antenna_gain.num_antenna;
-    float o=fed_cmbl.antenna_gain.order;
-    float Tu=fed_cmbl.global_fid.upd_rate;
-    float K=fed_cmbl.antenna_gain.res_angle;
-    float no_paths=fed_cmbl.global_fid.num_path;
-    float no_Tx=_n_tx * _n_bands; //_n_tx and _n_tx
-    float no_Rx=_n_rx * _n_bands;
-    float dict_size=fed_cmbl.antenna_gain.dict_dim;
-    
-    float C=0; //Compute in 64-bit MAC
-    float M=0; //Memory in terms of 64 bit FP Units
-    float B=0; //Memory Bandwidth in terms of 64bit FP I/O operations required
-    float L=0; //Latency in terms of number of clock cycles required for this step
-    
-    if(o==0){
-        C=0;
-        M=M+1;
-        B=B+(no_paths*2/Tu); //getting gain value per update time
-        L=20; //not sure about latency
-    }else if(o==1){
-        C=0;
-        M=M+(no_Tx + no_Rx); //gains for each antenna
-        B=B+((no_paths*2)/Tu); // getting each antenna's gain per update time
-        L=20;
-    }else if(o==2){
-        C=C+2*(8)+1;
-        C=no_paths*(C/Tu);
-        M=M+(5*(no_Tx + no_Rx)+1);
-        B=B+((5*(no_paths*2)+1)/Tu); //getting each antenna's gains and beamwidths per update time
-        L=21;
-    }else if(0==3){
-        C=C+2*(8)+1;
-        C=no_paths*(C/Tu);
-        M=M+(6*(no_Tx + no_Rx));
-        B=B+((6*(no_paths*2))/Tu); //getting each antenna's gains and beamwidths per update time
-        L=21;
-    }else if(o==4){
-        K=pow(2, (ceil(log2(180/K))));
-        C=C+2*(8)+1; //to get 2nd/3rd order gains
-        float C1=K*(2*ComputeTable(Cos,Corl_C)+3)+no_antenna+(no_antenna/2)*log2(no_antenna)+no_antenna+K+(K/2)*log2(K)+2*K;
-        C=C+C1;
-        C=2*C+1;
-        C=no_paths*(C/Tu);
-        M=M+(6*(no_Tx + no_Rx))+(no_Tx + no_Rx)*(4*K+2*no_antenna); //(2K+N)2 (bytes to bits)
-        B=B+((6*(no_paths*2))/Tu)+(4*K+2*no_antenna)*no_paths/Tu;
-        L=21+ceil(log2(C1));
-    }else if(o==5){
-        float N=(180/K)*(90/K)*(90/K);
-        float n=(180/K);
-        M=(no_Tx + no_Rx)*(n*dict_size+dict_size*N);
-        C=C+1620+dict_size; //assuming 540 MACs for absolute value calc
-        C=no_paths*(C/Tu);
-        B=B+((dict_size*2)*(no_paths*2)/Tu); //getting 3 numbers from memory per update time;
-        L=20+ceil(log2(1620))+ceil(log2(dict_size));
-    }
-
-    fed_cmbl.antenna_gain.set_cmbl(C, M, B, L);
+void Band::antenna_gain_cmbl(single_band_ge_stats & fed_cmbl){
+  float no_antenna=fed_cmbl.antenna_gain.num_antenna;
+  float o=fed_cmbl.antenna_gain.order;
+  float Tu=fed_cmbl.global_fid.upd_rate;
+  float K=fed_cmbl.antenna_gain.res_angle;
+  float no_paths=fed_cmbl.global_fid.num_path;
+  float no_Tx=_n_tx * _n_bands; //_n_tx and _n_tx
+  float no_Rx=_n_rx * _n_bands;
+  float dict_size=fed_cmbl.antenna_gain.dict_dim;
+  
+  float C=0; //Compute in 64-bit MAC
+  float M=0; //Memory in terms of 64 bit FP Units
+  float B=0; //Memory Bandwidth in terms of 64bit FP I/O operations required
+  float L=0; //Latency in terms of number of clock cycles required for this step
+  
+  if(o==0){
+      C=0;
+      M=M+1;
+      B=B+(no_paths*2/Tu); //getting gain value per update time
+      L=20; //not sure about latency
+  }else if(o==1){
+      C=0;
+      M=M+(no_Tx + no_Rx); //gains for each antenna
+      B=B+((no_paths*2)/Tu); // getting each antenna's gain per update time
+      L=20;
+  }else if(o==2){
+      C=C+2*(8)+1;
+      C=no_paths*(C/Tu);
+      M=M+(5*(no_Tx + no_Rx)+1);
+      B=B+((5*(no_paths*2)+1)/Tu); //getting each antenna's gains and beamwidths per update time
+      L=21;
+  }else if(0==3){
+      C=C+2*(8)+1;
+      C=no_paths*(C/Tu);
+      M=M+(6*(no_Tx + no_Rx));
+      B=B+((6*(no_paths*2))/Tu); //getting each antenna's gains and beamwidths per update time
+      L=21;
+  }else if(o==4){
+      K=pow(2, (ceil(log2(180/K))));
+      C=C+2*(8)+1; //to get 2nd/3rd order gains
+      float C1=K*(2*ComputeTable(Cos,Corl_C)+3)+no_antenna+(no_antenna/2)*log2(no_antenna)+no_antenna+K+(K/2)*log2(K)+2*K;
+      C=C+C1;
+      C=2*C+1;
+      C=no_paths*(C/Tu);
+      M=M+(6*(no_Tx + no_Rx))+(no_Tx + no_Rx)*(4*K+2*no_antenna); //(2K+N)2 (bytes to bits)
+      B=B+((6*(no_paths*2))/Tu)+(4*K+2*no_antenna)*no_paths/Tu;
+      L=21+ceil(log2(C1));
+  }else if(o==5){
+      float N=(180/K)*(90/K)*(90/K);
+      float n=(180/K);
+      M=(no_Tx + no_Rx)*(n*dict_size+dict_size*N);
+      C=C+1620+dict_size; //assuming 540 MACs for absolute value calc
+      C=no_paths*(C/Tu);
+      B=B+((dict_size*2)*(no_paths*2)/Tu); //getting 3 numbers from memory per update time;
+      L=20+ceil(log2(1620))+ceil(log2(dict_size));
   }
-  // Path Gain and Velocity
-  void Band::path_gain_cmbl(single_band_ge_stats & fed_cmbl){
-    // Given Fidelites (Change these according to your blocks inputs)
-    float SU = fed_cmbl.coordinate_trans.ta1_scene_upd_rate;
-    float TU = fed_cmbl.global_fid.upd_rate;
-    float NF = num_paths() * 2;
-    
-    // compute table comtains the equivilent MAC operational values of the
-    // Sine/exponent/division functions etc.
-    // For this block we need Division which is located at ComputeTable('div_HF','C')
-    
-    float C = 0; // Compute - in terms of 64bit FP MACs
-    float M = 0; // Memory in terms of 64 bit FP Units
-    float B = 0; // Memory Bandwidth in terms of 64bit FP I/O operations required
-    float L = 0; // Latency in terms of number of clock cycles required for this step
+
+  fed_cmbl.antenna_gain.set_cmbl(C, M, B, L);
+}
+// Path Gain and Velocity
+void Band::path_gain_cmbl(single_band_ge_stats & fed_cmbl){
+  // Given Fidelites (Change these according to your blocks inputs)
+  float SU = fed_cmbl.coordinate_trans.ta1_scene_upd_rate;
+  float TU = fed_cmbl.global_fid.upd_rate;
+  float NF = num_paths() * 2;
+  
+  // compute table comtains the equivilent MAC operational values of the
+  // Sine/exponent/division functions etc.
+  // For this block we need Division which is located at ComputeTable('div_HF','C')
+  
+  float C = 0; // Compute - in terms of 64bit FP MACs
+  float M = 0; // Memory in terms of 64 bit FP Units
+  float B = 0; // Memory Bandwidth in terms of 64bit FP I/O operations required
+  float L = 0; // Latency in terms of number of clock cycles required for this step
 
 // ------ Path distance compuation ------
 //     Path_distance is used to calculate the coefficients of fractional delay filter, path gain.
@@ -296,184 +353,192 @@ std::vector<float>& Band::normalized_vec() {
 //     v: path velocity, the detailed equation is givien in the next section.
 //     a: path accelelation, the detailed euqation is given in the next section. 
 //     t: the time interval between two updates.
-    C = C + (3 / TU) + 1 / TU + (3 / TU) + ComputeTable(Sqrt,Corl_C); // 5 * TU to get the relative_location at each update(including scenarioUpdate),  3 to get sum of square, 
-    // 1 at updating rate for the distance increment, we get new v at each update, yet the a get updated only at scenario update.
-    M = M + 3; // 3 to store relative_location.
-    B = B + 6; // Bandwidth to transmit 2 set of coordinates
-    L = L + 2 + ComputeTable(Sqrt,Corl_L); // 1 for relative_location update, 1 for sum of squares, 1 for square root 
+//  C = C + (3 / TU) + 1 / TU + (3 / TU) + ComputeTable(Sqrt,Corl_C); // 5 * TU to get the relative_location at each update(including scenarioUpdate),  3 to get sum of square, 
+  // 1 at updating rate for the distance increment, we get new v at each update, yet the a get updated only at scenario update.
+  M = M + 3; // 3 to store relative_location.
+  B = B + 6; // Bandwidth to transmit 2 set of coordinates
+  L = L + 2 + ComputeTable(Sqrt,Corl_L); // 1 for relative_location update, 1 for sum of squares, 1 for square root 
 //% End of the path distance compuation
 
 
-    //% Path veloctiy compuation
-    //     Path_velocity is calculated by first calculate the path velocity between two object at each scienro update
-    //     second we calculate the path acceleration at scienro update.
-    //     Relative_velocity = {v1_x - v2_x, v1_y - v2_y, v1_z - v2_z};
-    //     Relative_acceleration = t * {a1_x - a2_x, a1_y - a2_y, a1_z - a2_z};
-    //     path_velocity = sqrt(relative_velocity.^2);
-    //     the relative speed at each update is calculated with equation below
-    //     relative_velocity = relative_velocity + relative acceleration
-    //     t: the time interval between two updates
-    C = C + 6 / SU + 3 / TU + (3 + ComputeTable(Sqrt,Corl_C)) / TU; // 6 floating add at SU for relative velocity and acceleration,
-                                                                                                  // 3 floating addition for relative_velocity, 3 mac and 1 sqrt for path_velocity, 
-    M = M + 6; // 3 for path_velocity, 3 for path_acceleration
-    L = L + 3; // 1 for floating additiona, 1 for floating multiplication, 1 for sqrt
-    B = B + 12 / SU;// 6 for two sets of path_velocity, 6 for two sets of path acceleration
-    //% end of the Path veloctiy compuation
+  //% Path veloctiy compuation
+  //     Path_velocity is calculated by first calculate the path velocity between two object at each scienro update
+  //     second we calculate the path acceleration at scienro update.
+  //     Relative_velocity = {v1_x - v2_x, v1_y - v2_y, v1_z - v2_z};
+  //     Relative_acceleration = t * {a1_x - a2_x, a1_y - a2_y, a1_z - a2_z};
+  //     path_velocity = sqrt(relative_velocity.^2);
+  //     the relative speed at each update is calculated with equation below
+  //     relative_velocity = relative_velocity + relative acceleration
+  //     t: the time interval between two updates
+  C = C + 6 / SU + 3 / TU + (3 + ComputeTable(Sqrt,Corl_C)) / TU; // 6 floating add at SU for relative velocity and acceleration,
+                                                                                                // 3 floating addition for relative_velocity, 3 mac and 1 sqrt for path_velocity, 
+  M = M + 6; // 3 for path_velocity, 3 for path_acceleration
+  L = L + 3; // 1 for floating additiona, 1 for floating multiplication, 1 for sqrt
+  B = B + 12 / SU;// 6 for two sets of path_velocity, 6 for two sets of path acceleration
+  //% end of the Path veloctiy compuation
 
 
-    //% Path gain computation
-    //     Path_gain is calculated by first evluate the path distance at scenario update, the compelete equation for the gain is the  
-    //     Path_gain = 1/(16pi^2) * 1/path_distance^2 * 1/f0^2
-    //     f0: the carrier frequency of the channel 
+  //% Path gain computation
+  //     Path_gain is calculated by first evluate the path distance at scenario update, the compelete equation for the gain is the  
+  //     Path_gain = 1/(16pi^2) * 1/path_distance^2 * 1/f0^2
+  //     f0: the carrier frequency of the channel 
 
-    C = C + ComputeTable(Div_HF,Corl_C) / TU; // path_distance^2 is available from the path distance computation, only one floating division.
-    M = M + 1; // 1 for constant;
-    L = L + ComputeTable(Div_HF,Corl_C); // 1 for foating division;
-    B = B + 1/TU; // 1 for path_distance^2; // added to wenhaos code the dependence of bandwidth on TU
-    //% end of the path gain computation
+  C = C + ComputeTable(Div_HF,Corl_C) / TU; // path_distance^2 is available from the path distance computation, only one floating division.
+  M = M + 1; // 1 for constant;
+  L = L + ComputeTable(Div_HF,Corl_C); // 1 for foating division;
+  B = B + 1/TU; // 1 for path_distance^2; // added to wenhaos code the dependence of bandwidth on TU
+  //% end of the path gain computation
 
 
-    // Path delay computation
-    //     Path_delay is computed by divide the path distance by speed of light
-    //     path_delay = path_distance / c;
-    C = C + ComputeTable(Div_HF,Corl_C) / TU; // path_distance2 is available from the path distance computation, only one floating division to get delay.
-    M = M + 1; // 1 for speed of light;
-    L = L + ComputeTable(Div_HF,Corl_L); // 1 for foating division;
-    B = B + 1/TU; // 1 for distance; // added to wenhaos code the dependence of bandwidth on TU
-    // end of the path delay computation
+  // Path delay computation
+  //     Path_delay is computed by divide the path distance by speed of light
+  //     path_delay = path_distance / c;
+  C = C + ComputeTable(Div_HF,Corl_C) / TU; // path_distance2 is available from the path distance computation, only one floating division to get delay.
+  M = M + 1; // 1 for speed of light;
+  L = L + ComputeTable(Div_HF,Corl_L); // 1 for foating division;
+  B = B + 1/TU; // 1 for distance; // added to wenhaos code the dependence of bandwidth on TU
+  // end of the path delay computation
 
-    C = C * NF;
-    M = M * NF;
-    L = L;
-    B = B * NF;
-    fed_cmbl.path_velocity.set_cmbl(C, M, B, L);
-  }
+  C = C * NF;
+  M = M * NF;
+  L = L;
+  B = B * NF;
+  fed_cmbl.path_velocity.set_cmbl(C, M, B, L);
+}
 
-  // RCS
-  void Band::rcs_cmbl(single_band_ge_stats & fed_cmbl){
-    // TU - Update time
-    // PT - Number of paths
-    // OB - Number of objects
-    
-    float TU = fed_cmbl.global_fid.upd_rate;
-    float PT = fed_cmbl.global_fid.num_path;
-    float OB = fed_cmbl.global_fid.num_obj;
-
-    float C = 0; // Compute - in terms of 64bit FP MACs - Total number of MAC units accessed per sec
-    float M = 0; // Memory in terms of 64 bit FP Units - Total memory needed for all objects
-    float B = 0; // Memory Bandwidth in terms of 64bit FP I/O operations required - Total memory access per second
-    float L = 0; // Latency in terms of number of clock cycles required for this step
-
-    //// RCS fidelity
-    // Order 0
-    if (fed_cmbl.rcs.order == 0){
-        C = 0;
-        M = 1;
-        B = 1;
-        L = 0;
-    }
-    // Order 1
-    else if (fed_cmbl.rcs.order == 1){
-        std::cout << 'RCS fidelity order not supported.';
-        C = 0;
-        M = 0;
-        B = 0;
-        L = 0;
-    }
-
-    // Order 2
-    else if (fed_cmbl.rcs.order == 2){
-        C = PT*(5 + 3*fed_cmbl.rcs.points + 2*ComputeTable(Cos,Corl_L) + 3*ComputeTable(Sin,Corl_C))/TU;
-        M = OB*4*fed_cmbl.rcs.points;
-        B = PT*4*fed_cmbl.rcs.points/TU;
-        L = 0;
-    }
-
-    // Order 3
-    else if (fed_cmbl.rcs.order == 3){
-        C = PT*(5 + 7*fed_cmbl.rcs.points + 2*ComputeTable(Cos,Corl_L) + 3*ComputeTable(Sin,Corl_C))/TU;
-        M = OB*7*fed_cmbl.rcs.points;
-        B = PT*7*fed_cmbl.rcs.points/TU;
-        L = 0;
-    }
-
-    // Order 4
-    else if (fed_cmbl.rcs.order == 4){
-        C = PT*(5 + 12*fed_cmbl.rcs.points + 2*ComputeTable(Cos,Corl_L) + 3*ComputeTable(Sin,Corl_C))/TU;
-        M = OB*8*fed_cmbl.rcs.points;
-        B = PT*8*fed_cmbl.rcs.points/TU;
-        L = 0;
-    }
-
-    // Order 5
-    else if (fed_cmbl.rcs.order == 5){
-        std::cout << 'RCS fidelity order not supported.';
-        C = 0;
-        M = 0;
-        B = 0;
-        L = 0;
-    }
-    // Order 6
-    else if (fed_cmbl.rcs.order == 6){
-        C = 0;
-        M = OB*(360/fed_cmbl.rcs.angle)*(180/fed_cmbl.rcs.angle)*(360/fed_cmbl.rcs.angle)*(180/fed_cmbl.rcs.angle)*fed_cmbl.rcs.freq*fed_cmbl.rcs.plzn*fed_cmbl.rcs.samples;
-        B = PT*fed_cmbl.rcs.samples/TU;
-        L = 0;
-    }
-    else{
-        std::cout << 'RCS fidelity order not supported.';
-        C = 0;
-        M = 0;
-        B = 0;
-        L = 0;
-    }
-
-    fed_cmbl.rcs.set_cmbl(C, M, B, L);
-  }
-
-  // Time Update
-  void Band::tu_cmbl(single_band_ge_stats & fed_cmbl){
-    // Given Fidelites (Change these according to your blocks inputs)
-    float TU = fed_cmbl.global_fid.upd_rate;
-    float NF = fed_cmbl.global_fid.num_path; // no need to 2X factor
+// RCS
+void Band::rcs_cmbl(single_band_ge_stats & fed_cmbl){
+  // TU - Update time
+  // PT - Number of paths
+  // OB - Number of objects
   
-    float C = 0; // Compute - in terms of 64bit FP MACs
-    float M = 0; // Memory in terms of 64 bit FP Units
-    float B = 0; // Memory Bandwidth in terms of 64bit FP I/O operations required
-    float L = 0; // Latency in terms of number of clock cycles required for this step
+  float TU = fed_cmbl.global_fid.upd_rate;
+  float PT = fed_cmbl.global_fid.num_path;
+  float OB = fed_cmbl.global_fid.num_obj;
 
+  float C = 0; // Compute - in terms of 64bit FP MACs - Total number of MAC units accessed per sec
+  float M = 0; // Memory in terms of 64 bit FP Units - Total memory needed for all objects
+  float B = 0; // Memory Bandwidth in terms of 64bit FP I/O operations required - Total memory access per second
+  float L = 0; // Latency in terms of number of clock cycles required for this step
 
-
-    //% UpdateRate computation
-    //     UpdateRate is inversly propotional to path speed for a fixed noise threshold
-    //     TU = C / v;
-    //     C: some constant including noise threshold
-    //     v: path velocity from other block
-
-    C = C + ComputeTable(Div_HF, Corl_C) / TU; // path_distance^2 is available from the path distance computation, only one floating division.
-    M = M + 1; // 1 for constant;
-    L = L + ComputeTable(Div_HF, Corl_C); // 1 for foating division;
-    B = B + 1/TU; // 1 for path velocity
-    //% end of the path gain computation
-
-    C = C * NF;
-    M = M * NF;
-    L = L;
-    B = B * NF;
-
-    fed_cmbl.tu.set_cmbl(C, M, B, L);
+  //// RCS fidelity
+  // Order 0
+  if (fed_cmbl.rcs.order == 0){
+      C = 0;
+      M = 1;
+      B = 1;
+      L = 0;
+  }
+  // Order 1
+  else if (fed_cmbl.rcs.order == 1){
+      std::cout << "RCS fidelity order not supported.";
+      C = 0;
+      M = 0;
+      B = 0;
+      L = 0;
   }
 
-  void Band::get_ge_cmbl(single_band_ge_stats & fed_cmbl){
-    coordinate_trans_cmbl(fed_cmbl);
-    nr_engine_cmbl(fed_cmbl);
-    relative_orientation_cmbl(fed_cmbl);
-    antenna_gain_cmbl(fed_cmbl);
-    path_gain_cmbl(fed_cmbl);
-    rcs_cmbl(fed_cmbl);
-    tu_cmbl(fed_cmbl);
+  // Order 2
+  else if (fed_cmbl.rcs.order == 2){
+      C = PT*(5 + 3*fed_cmbl.rcs.points + 2*ComputeTable(Cos,Corl_L) + 3*ComputeTable(Sin,Corl_C))/TU;
+      M = OB*4*fed_cmbl.rcs.points;
+      B = PT*4*fed_cmbl.rcs.points/TU;
+      L = 0;
   }
 
+  // Order 3
+  else if (fed_cmbl.rcs.order == 3){
+      C = PT*(5 + 7*fed_cmbl.rcs.points + 2*ComputeTable(Cos,Corl_L) + 3*ComputeTable(Sin,Corl_C))/TU;
+      M = OB*7*fed_cmbl.rcs.points;
+      B = PT*7*fed_cmbl.rcs.points/TU;
+      L = 0;
+  }
+
+  // Order 4
+  else if (fed_cmbl.rcs.order == 4){
+      C = PT*(5 + 12*fed_cmbl.rcs.points + 2*ComputeTable(Cos,Corl_L) + 3*ComputeTable(Sin,Corl_C))/TU;
+      M = OB*8*fed_cmbl.rcs.points;
+      B = PT*8*fed_cmbl.rcs.points/TU;
+      L = 0;
+  }
+
+  // Order 5
+  else if (fed_cmbl.rcs.order == 5){
+      std::cout << "RCS fidelity order not supported.";
+      C = 0;
+      M = 0;
+      B = 0;
+      L = 0;
+  }
+  // Order 6
+  else if (fed_cmbl.rcs.order == 6){
+      C = 0;
+      M = OB*(360/fed_cmbl.rcs.angle)*(180/fed_cmbl.rcs.angle)*(360/fed_cmbl.rcs.angle)*(180/fed_cmbl.rcs.angle)*fed_cmbl.rcs.freq*fed_cmbl.rcs.plzn*fed_cmbl.rcs.samples;
+      B = PT*fed_cmbl.rcs.samples/TU;
+      L = 0;
+  }
+  else{
+      std::cout << "RCS fidelity order not supported.";
+      C = 0;
+      M = 0;
+      B = 0;
+      L = 0;
+  }
+
+  fed_cmbl.rcs.set_cmbl(C, M, B, L);
+}
+
+// Time Update
+void Band::tu_cmbl(single_band_ge_stats & fed_cmbl){
+  // Given Fidelites (Change these according to your blocks inputs)
+  float TU = fed_cmbl.global_fid.upd_rate;
+  float NF = fed_cmbl.global_fid.num_path; // no need to 2X factor
+
+  float C = 0; // Compute - in terms of 64bit FP MACs
+  float M = 0; // Memory in terms of 64 bit FP Units
+  float B = 0; // Memory Bandwidth in terms of 64bit FP I/O operations required
+  float L = 0; // Latency in terms of number of clock cycles required for this step
+
+
+
+  //% UpdateRate computation
+  //     UpdateRate is inversly propotional to path speed for a fixed noise threshold
+  //     TU = C / v;
+  //     C: some constant including noise threshold
+  //     v: path velocity from other block
+
+  C = C + ComputeTable(Div_HF, Corl_C) / TU; // path_distance^2 is available from the path distance computation, only one floating division.
+  M = M + 1; // 1 for constant;
+  L = L + ComputeTable(Div_HF, Corl_C); // 1 for foating division;
+  B = B + 1/TU; // 1 for path velocity
+  //% end of the path gain computation
+
+  C = C * NF;
+  M = M * NF;
+  L = L;
+  B = B * NF;
+
+  fed_cmbl.tu.set_cmbl(C, M, B, L);
+}
+
+float Band::average_clutter(std::vector<Band> scene_vec) {
+  float average_clutter=0;
+  for(auto & b : scene_vec){
+    average_clutter+=b._frac_clutter;
+  }
+  average_clutter/=scene_vec.size();
+  return average_clutter;
+}
+
+void Band::get_ge_cmbl(single_band_ge_stats & fed_cmbl){
+  coordinate_trans_cmbl(fed_cmbl);
+  nr_engine_cmbl(fed_cmbl);
+  relative_orientation_cmbl(fed_cmbl);
+  antenna_gain_cmbl(fed_cmbl);
+  path_gain_cmbl(fed_cmbl);
+  rcs_cmbl(fed_cmbl);
+  tu_cmbl(fed_cmbl);
+}
 
 int get_best_ppu() {
   return 0;
@@ -527,13 +592,16 @@ ge_core * design_ge_core_for_scenario(std::vector<Band>& scene_vec, drbe_wafer& 
   return ge;
 }
 
-bool model_succesful(path_proc_unit* ppu, Band& band, drbe_wafer& w, int max_wafers) {
+bool model_succesful(path_proc_unit* ppu, Band& b, drbe_wafer& w, int max_wafers) {
+
   int failures=0;
-  int ppus = band.ppus_per_band(*ppu,w,failures,true);
+  bool verbose=false;
+
+  float wafer_unconstrained_ppus = b.ppus_per_band(*ppu,w,failures,verbose);
+  float links_per_wafer = b.calc_links_per_wafer(wafer_unconstrained_ppus,ppu,w,verbose);
+  float num_wafers = b.num_links() / links_per_wafer;
 
   if(failures!=0) return false; // don't include this scenario if failed
-
-  float num_wafers = ppus / w.num_units();
 
   return ceil(num_wafers) <= max_wafers;
 }
@@ -585,12 +653,11 @@ std::vector<Band> top_k_pareto_scenarios(path_proc_unit* ppu, std::vector<Band>&
     }
 
     //while we do everything, check and see if we found a higher # platforms
-    if(top_k_scenarios[0].platforms() < hardest_possible_band.platforms()) {
+    if(top_k_scenarios[0].num_links() < hardest_possible_band.num_links()) {
       top_k_scenarios[0] = hardest_possible_band;
     }
 
-    //while we do everything, check and see if we found a higher # platforms
-    if(top_k_scenarios[1].reflectors() < hardest_possible_band.reflectors()) {
+    if(top_k_scenarios[1].link_complexity() < hardest_possible_band.link_complexity()) {
       top_k_scenarios[1] = hardest_possible_band;
     }
 
@@ -611,9 +678,9 @@ std::vector<Band> top_k_pareto_scenarios(path_proc_unit* ppu, std::vector<Band>&
   //}
   //printf("num succ: %d \n", (int)successful_pareto_bands.size());
 
-  if(top_k_scenarios[0].reflectors() > ScenarioGen::max_platforms() * .9) {
-    top_k_scenarios.resize(1);
-  }
+  //if(top_k_scenarios[0].reflectors() > ScenarioGen::max_platforms() * .9) {
+  //  top_k_scenarios.resize(1);
+  //}
 
   //get the most different bands
   for(int i = top_k_scenarios.size(); i < k; ++i) {
@@ -634,6 +701,7 @@ std::vector<Band> top_k_pareto_scenarios(path_proc_unit* ppu, std::vector<Band>&
     }
     top_k_scenarios.push_back(chosen_band);
   }
+
 
   for(auto& band : top_k_scenarios) {
     band.print_norm_csv();
@@ -693,10 +761,22 @@ void evaluate_ppu(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer&
   stats.avg_coef_per_mm2 = total_coef / (total_ppus * ppu->area());
 }
 
-path_proc_unit* design_ppu_for_max_capability(drbe_wafer& w, bool dynamic_reconfig) {
+//path_proc_unit* design_ppu_for_max_capability(drbe_wafer& w, bool dynamic_reconfig,
+//                                              bool direct_path, bool aidp, bool easy_scenario) {
+//
+//  for(int fixed_platforms = ScenarioGen::min_platforms() - 20; 
+//          fixed_platforms <= 300; fixed_platforms +=10){
+//    std::vector<Band> scene_vec;
+//    // Generate Scenarios
+//    ScenarioGen::gen_scenarios(scene_vec, direct_path, aidp,
+//                               1 /*num scenarios=1*/, fixed_platforms, !easy_scenario);
+//  }
+//
+//
+//
+//}
 
 
-}
 
 path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafer& w,
                                          bool dynamic_reconfig) {
@@ -739,11 +819,8 @@ path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafe
       for(int cpc = 20; cpc < 21; cpc+=5) { //FIXME: turn off for speed
 
 
-        for(int clutter_index = 0; clutter_index <= 100; clutter_index+=10) {
+        for(int clutter_index = 0; clutter_index <= 100; clutter_index+=5) {
           int clutter_ratio=clutter_index;
-          if(clutter_index==0) {
-            clutter_ratio=1;
-          }
 
           for(int mem_ratio =1; mem_ratio < 99; mem_ratio+=2) {
             path_proc_unit* ppu =new path_proc_unit(&t);
@@ -802,24 +879,79 @@ path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafe
 
 
 
+void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w,
+                          bool direct_path, bool aidp, bool easy) {
+
+    int fixed_platforms = 8;
+ 
+    static const int MAX_WAFERS=21;
+    std::vector<std::tuple<int,int,float>> metric;
+    metric.resize(MAX_WAFERS);
+
+    w.set_limit_wafer_io(false);
+
+    for(int num_wafers=1; num_wafers < MAX_WAFERS; ++num_wafers) {
+      if(num_wafers ==2) {
+        w.set_limit_wafer_io(true);
+      }
+
+      for(; fixed_platforms <= 10000; fixed_platforms +=1){
+      
+        std::vector<Band> scene_vec;
+        ScenarioGen::gen_scenarios(scene_vec, direct_path, aidp,1/*num_scene=1*/, 
+                                   fixed_platforms, !easy);
+        PPUStats stats;
+ 
+        path_proc_unit* new_ppu = design_ppu_for_scenarios(scene_vec,w,false);
+
+
+        evaluate_ppu(new_ppu,scene_vec,w,stats,num_wafers,false /*verbose*/);    
+        if(stats.avg_wafers <= num_wafers) {
+          //we succeeded, record fixed platforms
+        } else {
+          metric[num_wafers]=std::make_tuple(scene_vec[0].platforms(),
+                                             scene_vec[0].num_links(),
+                                             new_ppu->_mem_ratio);
+
+          // we failed, break out and try increasing num_wafers
+          break;
+        }
+     }
+   }
+
+   printf("num_wafers num_platforms\n");
+   for(int num_wafers=1; num_wafers < MAX_WAFERS; ++num_wafers) {
+     printf("%8d %8d %8d %8.2f\n", num_wafers, std::get<0>(metric[num_wafers]),
+                                            std::get<1>(metric[num_wafers]),
+                                            std::get<2>(metric[num_wafers]));
+
+   }
+   printf("\n");
+}
+
+
 int main(int argc, char* argv[]) {
   bool verbose = false;
   bool direct_path = false;
-  bool print_pareto = false;
   bool dynamic_reconfig = false;
   bool verbose_ge_info = false;
   bool aidp = false;
   bool challenge_scenario=false;
   int num_scenarios=1000;
   bool limit_wafer_io=false;
-  int chiplet_io_layer=2;
+  int chiplet_io_layer=4;
   bool easy_scenario=false;
+
+  bool print_pareto = false;
+  bool print_wafer_scaling = false;
+
+  int num_wafers_target=1;
 
   string dump_file_name="";
   tech_params t;
 
   int opt;
-  while ((opt = getopt_long(argc, argv, "vgkdprcn:wl:f:e", long_options, nullptr)) != -1) {
+  while ((opt = getopt_long(argc, argv, "vgkdprcn:wl:f:et:", long_options, nullptr)) != -1) {
     switch (opt) {
       case 'd': direct_path=true; break;
       case 'c': challenge_scenario=true; break;
@@ -827,12 +959,16 @@ int main(int argc, char* argv[]) {
       case 'r': dynamic_reconfig=true; break;
       case 'v': verbose = true; break;
       case 'g': verbose_ge_info = true; break;
-      case 'p': print_pareto = true; break;
       case 'n': num_scenarios = atoi(optarg); break;
       case 'w': limit_wafer_io = true; break;
       case 'e': easy_scenario = true; break;
       case 'l': chiplet_io_layer = atoi(optarg); break;
+      case 't': num_wafers_target = atoi(optarg); break;
       case 'f': dump_file_name = optarg; break;
+
+      case ANALYSIS_PARETO:        print_pareto = true; break;
+      case ANALYSIS_WAFER_SCALING: print_wafer_scaling = true; break;
+
       default: exit(1);
     }
   }
@@ -855,8 +991,10 @@ int main(int argc, char* argv[]) {
   else cout << "tapped delay";
   cout << " channel model\n";
 
-
- 
+  std::vector<Band> scene_vec;
+  // Generate Scenarios
+  ScenarioGen::gen_scenarios(scene_vec, direct_path, aidp,
+                             num_scenarios);
 
   // You can run different experiments by uncommenting different loops here ... we should make this
   // more configurable in the future. : )
@@ -882,39 +1020,18 @@ int main(int argc, char* argv[]) {
   float factor = 2;
   //factor = factor * factor;
   for(float v = old; v < old*v_range+0.01; v*=factor) {
-    //t.set_area_multiplier(v);
+    t.set_area_multiplier(v);
     //w.set_wafer_io(v);
-    int num_wafers_target=v;
+    //int num_wafers_target=v;
     
-    if(num_wafers_target == 1){
-      limit_wafer_io = false;
-    }else{
-      limit_wafer_io = true;
-    }
+    //if(num_wafers_target == 1){
+    //  limit_wafer_io = false;
+    //}else{
+    //  limit_wafer_io = true;
+    //}
     
     w.set_limit_wafer_io(limit_wafer_io);
     w.set_chiplet_io_layer(chiplet_io_layer);
-
-  //for(int spmm = 1; spmm < 200; ++spmm) {
-    //t._sram_Mb_per_mm2=spmm;
-
-    //for(int agg_network = 1; agg_network < 200; agg_network+=1) {
-    //agg_network=11
-
-    for(int fixed_platforms = ScenarioGen::min_platforms() - 20; 
-            fixed_platforms <= 300; fixed_platforms +=10){
-    std::vector<Band> scene_vec;
-    // Generate Scenarios
-    ScenarioGen::gen_scenarios(scene_vec, direct_path, aidp,
-                               num_scenarios, fixed_platforms, !easy_scenario);
-
-    // record the target wafer
-    for(auto & b : scene_vec){
-      b.target_num_wafer = num_wafers_target;
-      b.chiplet_io_layer = w._t->_chiplet_io_bits_per_mm2;
-      b.wafer_io_limit = w.wafer_io();
-      b.tech_scaling = w._t->area_multiplier();
-    }
 
     // Set GE fidelity
     ScenarioGen::set_fidelity(scene_vec, w);
@@ -932,18 +1049,7 @@ int main(int argc, char* argv[]) {
       top_k_pareto_scenarios(best_ppu,scene_vec,w,6,num_wafers_target);
     }
 
-    float average_clutter=0;
-    for(auto & b : scene_vec){
-      average_clutter+=b._frac_clutter;
-
-    }
-    average_clutter/=scene_vec.size();
-
-
-
-    //printf("Fast Update Period: %0.0fus, ", fast_update_period/1000);
-    
-    printf("v: %0.3f, plat: %d, ", v, fixed_platforms);
+    printf("v: %0.3f, ", v);
     
     printf("avg_clut: %f, "\
           "%dmm^2 PPU (%0.2f), in-MB: %0.2f, clust: %d, flex_clust: %d, coef/clust %d, "\
@@ -951,7 +1057,7 @@ int main(int argc, char* argv[]) {
           "ppus/die: %d, " \
           "Coef/mm2: %0.2f, links/cm2: %0.2f, "\
           "avg_waf: %0.2f, links/ppu: %0.2f, per_targ_waf: %0.1f, targ_waf: %d, fail: %d\n",
-        average_clutter,
+        Band::average_clutter(scene_vec),
         ppu_area, 
         best_ppu->area(), 
         best_ppu->input_buf_area()*t.sram_Mb_per_mm2()/8,
@@ -973,6 +1079,10 @@ int main(int argc, char* argv[]) {
         stats.percent_in_target_wafer*100,
         num_wafers_target,
         stats.total_failures);
+
+    if(print_wafer_scaling) {
+      print_wafer_tradeoff(*best_ppu, w, direct_path, aidp, easy_scenario);
+    }
 
     //printf("wafer_sram_MB: %0.2f, wafer_macc/s: %0.2f\n", 
     //    2025 * (best_ppu->input_buf_area() + best_ppu->_input_tap_fifo.area() 
@@ -999,7 +1109,6 @@ int main(int argc, char* argv[]) {
       continue;
     }
 
-  } PPUStats stats;
   }
   ge_tradeoff.close();
 

@@ -54,7 +54,7 @@ public:
 
 class router : hw_unit {
   static const int MaxDegree=16;
-  static const int DelayBufferEntries=40;
+  static const int DelayBufferEntries=0;
 public:
   router(tech_params* t) : hw_unit(t) {
   }
@@ -194,7 +194,7 @@ public:
   }
 
   int num_full_clusters() {
-    return _num_clusters;
+    return _num_flexible_clusters;
   }
 
   float path_conv_area() {
@@ -335,11 +335,11 @@ public:
     case 2:
       _t->_chiplet_io_bits_per_mm2 = 2.56/4.4*1024*1;
       break;
-
     case 4:
       _t->_chiplet_io_bits_per_mm2 = 2.56/4.4*1024*2;
       break;
     default:
+
       break;
     }
   }
