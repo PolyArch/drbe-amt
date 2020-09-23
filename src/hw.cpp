@@ -1,11 +1,9 @@
 #include "hw.h"
 
-
-
 float input_tap_fifo::area() {
 
   // Shift register estimate, a pretty weak one
-  int total_entries_per_cluster = ppu->_num_clusters * 2;
+  uint64_t total_entries_per_cluster = ppu->_num_clusters * 2;
   float bits = total_entries_per_cluster * ppu->_num_clusters * ppu->_input_bitwidth;
   float Mbits = bits/1024.0/1024.0;
   float area = Mbits * (1.0/_t->sram_Mb_per_mm2());

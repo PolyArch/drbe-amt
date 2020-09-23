@@ -3,7 +3,8 @@ using namespace std;
 
 enum analysis {
   ANALYSIS_PARETO=128,
-  ANALYSIS_WAFER_SCALING
+  ANALYSIS_WAFER_SCALING,
+  ANALYSIS_HW_CONFIG
 };
 
 static struct option long_options[] = {
@@ -21,6 +22,7 @@ static struct option long_options[] = {
     {"dump-file-name",     required_argument, nullptr, 'f',},
     {"print-pareto",       no_argument,       nullptr, ANALYSIS_PARETO},
     {"print-wafer-scaling",no_argument,       nullptr, ANALYSIS_WAFER_SCALING},
+    {"print-hw-config",    no_argument,       nullptr, ANALYSIS_HW_CONFIG},
     {0, 0, 0, 0,},
 };
 
@@ -944,6 +946,7 @@ int main(int argc, char* argv[]) {
 
   bool print_pareto = false;
   bool print_wafer_scaling = false;
+  bool print_hw_config = false;
 
   int num_wafers_target=1;
 
@@ -968,6 +971,7 @@ int main(int argc, char* argv[]) {
 
       case ANALYSIS_PARETO:        print_pareto = true; break;
       case ANALYSIS_WAFER_SCALING: print_wafer_scaling = true; break;
+      case ANALYSIS_HW_CONFIG:     print_hw_config = true; break;
 
       default: exit(1);
     }
@@ -1084,10 +1088,6 @@ int main(int argc, char* argv[]) {
       print_wafer_tradeoff(*best_ppu, w, direct_path, aidp, easy_scenario);
     }
 
-    //printf("wafer_sram_MB: %0.2f, wafer_macc/s: %0.2f\n", 
-    //    2025 * (best_ppu->input_buf_area() + best_ppu->_input_tap_fifo.area() 
-    //           + best_ppu->_coef_storage.area())*t.sram_Mb_per_mm2()/8,
-    //    2025 * best_ppu->_num_clusters*best_ppu->_coef_per_cluster*t._macc_per_complex_op/1024.0);
 
 
     //printf("Wafers Needed Histogram: ");
@@ -1098,9 +1098,26 @@ int main(int argc, char* argv[]) {
     //printf("PPU Wafer Needed (No GE) Histogram: ");
     //stats.print_wafer_histo();
     //printf("\n");
-    
-    //best_ppu->print_params();
-    //best_ppu->print_area_breakdown();
+
+
+    if(print_hw_config) {
+      best_ppu->print_params();
+      best_ppu->print_area_breakdown();
+
+      printf("wafer_sram_MB: %0.2f, wafer_macc: %0.2f E-MACC/s, wafer_SRAM_bw:%0.2f EB/s\n", 
+          w.num_units() * best_ppu->_ppus_per_chiplet *
+           (best_ppu->input_buf_area() + best_ppu->_input_tap_fifo.area() 
+                 + best_ppu->_coef_storage.area())*t.sram_Mb_per_mm2()/8,
+          w.num_units() * best_ppu->_ppus_per_chiplet *
+          (best_ppu->num_full_clusters()*best_ppu->_coef_per_cluster +
+          best_ppu->num_point_clusters()) *
+          SCALAR_MACC_PER_COMPLEX_MACC * 1000000000.0 / 1024.0 / 1024.0 / 1024.0 / 1024.0 / 1024.0,
+          w.num_units() * best_ppu->_ppus_per_chiplet *          
+          best_ppu->_num_clusters * best_ppu->_input_bitwidth 
+          * 1000000000.0 / 1024.0 / 1024.0 / 1024.0 / 1024.0 / 1024.0 / 8.0
+          );
+    }
+
 
     //  --------------------- Dump GE tradeoff ---------------- 
     evaluate_ge(scene_vec);

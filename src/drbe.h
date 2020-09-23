@@ -870,31 +870,31 @@ class ScenarioGen {
   static int overprov_link_complexity() { return 2*max_coef_per_link();} //Arbitrary constant
 
   //const static int clutter_links=0;
-  static int min_platforms   () {return 80;}
-  static int max_platforms   () {return 200;}
+  static int min_platforms() {return 80;}
+  static int max_platforms() {return 200;}
 
-  static int min_coef_per_link       () {return 70;}
-  static int max_coef_per_link       () {return 200;}
+  static int min_coef_per_link() {return 70;}
+  static int max_coef_per_link() {return 200;}
 
-  static int min_links       () {return 6400;}
-  static int max_links       () {return 40000;}
+  static int min_links() {return 6400;}
+  static int max_links() {return 40000;}
 
-  static int min_objects     () {return 10;} //threshold (obj/link)
-  static int max_objects     () {return 100;} //objective
+  static int min_objects() {return 10;} //threshold (obj/link)
+  static int max_objects() {return 100;} //objective
 
-  static int min_bands       () {return 1;}
-  static int max_bands       () {return 4;}
+  static int min_bands() {return 1;}
+  static int max_bands() {return 4;}
 
   static int min_coef_per_obj() {return  20;}
   static int max_coef_per_obj() {return 100;}
 
-  static int min_range       () {return 50;} // in km
-  static int max_range       () {return 500;}
+  static int min_range() {return 50;} // in km
+  static int max_range() {return 500;}
 
-  static float min_clutter     () {return 0;}
-  static float max_clutter     () {return 0.1;}
+  static float min_clutter() {return 0;}
+  static float max_clutter() {return 0.1;}
 
-  static float min_full_obj  () {return 0;}
-  static float max_full_obj  () {return 0.3;}
+  static float min_full_obj() {return 0;}
+  static float max_full_obj() {return 0.3;}
 };
 

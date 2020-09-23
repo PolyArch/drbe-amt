@@ -206,7 +206,7 @@ public:
     fixed_macc += num_full_clusters()  * _coef_per_cluster; 
 
     // Now lets add in doppler
-    fixed_macc += _num_flexible_clusters * _coef_per_cluster;
+    fixed_macc += num_full_clusters();
     fixed_macc += num_point_clusters(); //don't multiply, cause only one coefficient
 
     // Multiply out to get the area
