@@ -462,8 +462,8 @@ class Band {
       frac_slow = 0;
       frac_fast = 1;
     } else {
-      frac_slow  = (float)(_n_slow) / ((float)_n_obj);
-      frac_fast  = (float)(_n_fast) / ((float)_n_obj);
+      frac_slow  = (float)(_n_slow) / ((float)(_n_fast+_n_slow));
+      frac_fast  = (float)(_n_fast) / ((float)(_n_fast+_n_slow));
     }
 
     float avg_coef_bw =0; //average bandwidth in bits/ns
