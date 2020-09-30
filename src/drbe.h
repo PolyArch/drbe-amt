@@ -73,7 +73,7 @@ struct st_rcs : cmbl{
 
 struct st_tu : cmbl {};
 
-struct single_band_ge_stats {
+struct ge_stat_per_band {
   st_global_fid global_fid;
   st_coordinate_trans coordinate_trans;
   st_nr_engine nr_engine;
@@ -82,6 +82,7 @@ struct single_band_ge_stats {
   st_path_velocity path_velocity;
   st_rcs rcs;
   st_tu tu;
+  float total_area = 0.0;
 };
 
 
@@ -569,61 +570,106 @@ class Band {
       _n_rx = ceil((float) platforms() / _n_bands) * 2; 
   }
 
-   // TODO/FIXME: This code is not in the right place
-   // Please separate a statistics datastructure for the Geometry engine
-   // PPU also has a separate stats structure
 
-  // ---------------- Geometry Engine -----------------
+  bool _is_direct_path=false;
+  bool _is_aidp=false;
+
+  int _n_tx;
+  int _n_rx;
+  int _n_obj; //multipath
+  int _n_bands;
+
+  int _k_rcs_points=20; //number of points in RCS model
+  int _coef_per_rcs_point=20; //number of points in RCS model
+ 
+
+  //Objects by speed
+  int _n_platform=0;
+  int _n_slow=0;
+  int _n_fast=0;
+  int _n_fixed=0; 
+
+  int _n_full_range_obj;
+  int _avg_coef_per_object;
+  float _avg_frac_full_objects;
+  int _range;
+
+  float _frac_clutter = 0.0;
+  float _low_update_period=1000000; //
+  float _high_update_period=10000; //clock cycles?
+
+  std::vector<float> _norm_features;
+
+};
+
+struct WaferStats {
+  // Wafer level
+  int num_wafer = 0; // number of wafer that required to support this scenario
+  int target_num_wafer = 0; // the number of wafer we want for this scenario
+  int wafer_io_limit = 0; // the target wafer io
+  float tech_scaling = 0.0;
+  // chiplet level
+  float chiplet_io_layer = 0.0;
+
+  // Compute Area needed
+  int num_ppu_chiplet = 0;
+  int num_ge_chiplet = 0;
+
+  // percentage of scenario supported scenatio during finding the GE
+  // GE ratio 0% -> 100%
+  float percentage_support_scenario [100];
+};
+
+struct GEStats {
+// ---------------- Geometry Engine -----------------
   // Coordinate Translation
-  void coordinate_trans_cmbl(single_band_ge_stats & fed_cmbl);
+  void coordinate_trans_cmbl(ge_stat_per_band & fed_cmbl);
   // NR Engine
-  void nr_engine_cmbl(single_band_ge_stats & fed_cmbl);
+  void nr_engine_cmbl(ge_stat_per_band & fed_cmbl);
   // Relative Orientation
-  void relative_orientation_cmbl(single_band_ge_stats & fed_cmbl);
+  void relative_orientation_cmbl(ge_stat_per_band & fed_cmbl);
   // Antenna Gain
-  void antenna_gain_cmbl(single_band_ge_stats & fed_cmbl);
+  void antenna_gain_cmbl(ge_stat_per_band & fed_cmbl);
   // Path Gain and Velocity
-  void path_gain_cmbl(single_band_ge_stats & fed_cmbl);
+  void path_gain_cmbl(ge_stat_per_band & fed_cmbl);
   // RCS
-  void rcs_cmbl(single_band_ge_stats & fed_cmbl);
+  void rcs_cmbl(ge_stat_per_band & fed_cmbl);
   // Update Time
-  void tu_cmbl(single_band_ge_stats & fed_cmbl);
+  void tu_cmbl(ge_stat_per_band & fed_cmbl);
   // All
-  void get_ge_cmbl(single_band_ge_stats & fed_cmbl);
+  void get_ge_cmbl(ge_stat_per_band & fed_cmbl);
+
   // Dump GE tradeoff
-  std::string print_ge_tradeoff(){
+  std::string print_ge_tradeoff(Band & b, ge_stat_per_band & ge_stat, WaferStats & w_stats){
     std::stringstream ss;
-    assert(!(_is_aidp && _is_direct_path));// can not be AIDP and DP the same time
+    assert(!(b._is_aidp && b._is_direct_path));// can not be AIDP and DP the same time
     ss // Channel Model
-      << (_is_aidp ? "AIDP" : (_is_direct_path ? "DP" : "TDL")) << ", "
+      << (b._is_aidp ? "AIDP" : (b._is_direct_path ? "DP" : "TDL")) << ", "
       // Global Parameter
       << ge_stat.global_fid.upd_rate << ", "
       // Object(on sky, reflector), Transmitter, Receiver, Path and Bands
       << ge_stat.global_fid.num_obj << ", "                
-      << _n_tx << ", "
-      << _n_rx << ", "
+      << b._n_tx << ", "
+      << b._n_rx << ", "
       << ge_stat.global_fid.num_path << ", "
-      << _n_bands << ", "
+      << b._n_bands << ", "
       // ratio obj / tx or rx
-      << (float)ge_stat.global_fid.num_obj/_n_tx << ", "
+      << (float)ge_stat.global_fid.num_obj/b._n_tx << ", "
       // flector by speed
-      << _n_fast << ", "
-      << _n_slow << ", "
-      << _n_fixed << ", "
-      << platforms() << ", "
-      // wafer-level
-      << num_wafer << ", "
-//      << target_num_wafer <<", "
-//      << wafer_io_limit << ", "
-//      << tech_scaling << ", "
-      // chiplet level
-//      << chiplet_io_layer << ", "
+      << b._n_fast << ", "
+      << b._n_slow << ", "
+      << b._n_fixed << ", "
+      << b.platforms() << ", "
+      // Wafer Level Statistic
+      << w_stats.num_wafer <<", "
+      << w_stats.num_ppu_chiplet << ", "
+      << w_stats.num_ge_chiplet << ", "
       // Clutter
-      << _frac_clutter << ", "
+      << b._frac_clutter << ", "
       // Size
-      << _avg_coef_per_object << ", "
+      << b._avg_coef_per_object << ", "
       // Range
-      << _range << ", "
+      << b._range << ", "
       // GE fidelity
       << ge_stat.coordinate_trans.ta1_scene_upd_rate << ", "
       << ge_stat.nr_engine.interpolation_ord << ", "
@@ -676,55 +722,9 @@ class Band {
     return ss.str();
   }
 
-  bool _is_direct_path=false;
-  bool _is_aidp=false;
-
-  int _n_tx;
-  int _n_rx;
-  int _n_obj; //multipath
-  int _n_bands;
-
-  int _k_rcs_points=20; //number of points in RCS model
-  int _coef_per_rcs_point=20; //number of points in RCS model
- 
-
-  //Objects by speed
-  int _n_platform=0;
-  int _n_slow=0;
-  int _n_fast=0;
-  int _n_fixed=0; 
-
-  int _n_full_range_obj;
-  int _avg_coef_per_object;
-  float _avg_frac_full_objects;
-  int _range;
-
-  float _frac_clutter = 0.0;
-  float _low_update_period=1000000; //
-  float _high_update_period=10000; //clock cycles?
-
-  std::vector<float> _norm_features;
-
-  // TODO/FIXME:  This is messy,  please remove and place in its own
-  // statistics datastructure, please!
-  
-  // Wafer level
-  int num_wafer = 0; // number of wafer that required to support this scenario
-  int target_num_wafer = 0; // the number of wafer we want for this scenario
-  int wafer_io_limit = 0; // the target wafer io
-  float tech_scaling = 0.0;
-  // chiplet level
-  float chiplet_io_layer = 0.0;
-
-  // Compute Area needed
-  int num_ppu_chiplet = 0;
-  int num_ge_chiplet = 0;
-
-  // Geometry Engine Tradeoff
-  single_band_ge_stats ge_stat;
+  ge_stat_per_band * ge_stat_vec;
 
 };
-
 
 class ScenarioGen {
 
@@ -841,29 +841,31 @@ class ScenarioGen {
   }
 
   // Define the geometry engine fidelity
-  static void set_fidelity(std::vector<Band>& scene_vec, drbe_wafer & w){
+  static void set_fidelity(std::vector<Band>& scene_vec, GEStats & ge_stats, drbe_wafer & w){
+    int i = 0;
     for(auto & b : scene_vec){
       // Global
-      b.ge_stat.global_fid.upd_rate = 50e-6; //CASE: nominal 5e-6 max 50e-6
-      b.ge_stat.global_fid.num_obj = b._n_obj;
-      b.ge_stat.global_fid.num_path = b.num_paths();
+      ge_stats.ge_stat_vec[i].global_fid.upd_rate = 50e-6; //CASE: nominal 5e-6 max 50e-6
+      ge_stats.ge_stat_vec[i].global_fid.num_obj = b._n_obj;
+      ge_stats.ge_stat_vec[i].global_fid.num_path = b.num_paths();
       // Coordinate Transformation
-      b.ge_stat.coordinate_trans.ta1_scene_upd_rate = 1e-3; 
+      ge_stats.ge_stat_vec[i].coordinate_trans.ta1_scene_upd_rate = 1e-3; 
       // NR Engine
-      b.ge_stat.nr_engine.interpolation_ord = 6; //CASE: nominal 4 max 6
-      b.ge_stat.nr_engine.conv_fed = 2;
+      ge_stats.ge_stat_vec[i].nr_engine.interpolation_ord = 6; //CASE: nominal 4 max 6
+      ge_stats.ge_stat_vec[i].nr_engine.conv_fed = 2;
       // Antenna
-      b.ge_stat.antenna_gain.order = 5;
-      b.ge_stat.antenna_gain.num_antenna = 16;
-      b.ge_stat.antenna_gain.res_angle = 2;
-      b.ge_stat.antenna_gain.dict_dim = 800; //CASE: nominal 400 max 800
+      ge_stats.ge_stat_vec[i].antenna_gain.order = 5;
+      ge_stats.ge_stat_vec[i].antenna_gain.num_antenna = 16;
+      ge_stats.ge_stat_vec[i].antenna_gain.res_angle = 2;
+      ge_stats.ge_stat_vec[i].antenna_gain.dict_dim = 800; //CASE: nominal 400 max 800
       // RCS
-      b.ge_stat.rcs.order = 6; //CASE: nominal 4 max 6
-      b.ge_stat.rcs.points = 10; //CASE: nominal 20 max 10
-      b.ge_stat.rcs.angle = 1;
-      b.ge_stat.rcs.freq = 1;
-      b.ge_stat.rcs.plzn = 4; //CASE: nominal 1 max 4
-      b.ge_stat.rcs.samples = 10;
+      ge_stats.ge_stat_vec[i].rcs.order = 6; //CASE: nominal 4 max 6
+      ge_stats.ge_stat_vec[i].rcs.points = 10; //CASE: nominal 20 max 10
+      ge_stats.ge_stat_vec[i].rcs.angle = 1;
+      ge_stats.ge_stat_vec[i].rcs.freq = 1;
+      ge_stats.ge_stat_vec[i].rcs.plzn = 4; //CASE: nominal 1 max 4
+      ge_stats.ge_stat_vec[i].rcs.samples = 10;
+      i++;
     }
   }
 

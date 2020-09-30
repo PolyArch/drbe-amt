@@ -2,7 +2,7 @@ TARGET_EXEC ?= drbe_abs_model
 
 BUILD_DIR ?= ./build
 SRC_DIRS ?= ./src
-OPT ?= O3
+OPT ?= O0
 
 SRCS := $(shell find $(SRC_DIRS) -name *.cpp -or -name *.c)
 OBJS := $(SRCS:%=$(BUILD_DIR)/%.o)

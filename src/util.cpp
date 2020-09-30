@@ -28,13 +28,8 @@ std::ofstream print_ge_tradeoff(std::string filename){
               << "ratio-obj-tx/rx, "
               // Object by speed
               << "number-fast-obj, number-slow-obj, number-fixed-obj, number-platforms, "
-              // Wafer
-              << "number-wafer, "
-              << "target-wafer, "
-              << "wafer-io-limit, "
-              << "tech-scaling, "
-              // Chiplet
-              << "chiplet-io-layer, "
+              // Wafer Level 
+              << "num_wafer, num_ppu_chiplet, num_ge_chiplet, "
               // Clutter
               << "frac-clutter, "
               // Size
