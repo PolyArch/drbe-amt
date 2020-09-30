@@ -1,5 +1,6 @@
 *.Td
 *.d
+*.xlsx
 build/
 *.sw?
 compile_commands.json
