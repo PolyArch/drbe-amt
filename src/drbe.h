@@ -14,6 +14,23 @@
 #include <sstream>
 #include <tuple>
 
+struct WaferStats {
+  // Wafer level
+  int num_wafer = 0; // number of wafers we can provide (this is the input)
+  int wafer_io_limit = 0; // the target wafer io
+  float tech_scaling = 0.0;
+  // chiplet level
+  float chiplet_io_layer = 0.0;
+
+  // Compute Area needed
+  int num_ppu_chiplet = 0;
+  int num_ge_chiplet = 0;
+
+  // percentage of scenario supported scenatio during finding the GE
+  // GE ratio 0% -> 100%
+  float * ge_chiplet2support_scenario_percentage;
+};
+
 // compute, memory, bandwidth, latency
 struct cmbl{
   float compute = 0.0; // unit: MAC -> compute * 1e-9 to get Gig MACs
@@ -56,6 +73,7 @@ struct st_antenna_gain : cmbl{
   float num_antenna = 0.0;
   float res_angle = 0.0;
   float dict_dim = 0.0;
+  int general = 0;
 };
 
 // Path Gain and Velocity
@@ -68,7 +86,8 @@ struct st_rcs : cmbl{
   float angle = 0.0;
   float freq = 0.0;
   float plzn = 0.0;
-  float samples = 0.0;
+  float pntAngle = 0.0;
+  float plates = 0.0;
 };
 
 struct st_tu : cmbl {};
@@ -82,6 +101,8 @@ struct ge_stat_per_band {
   st_path_velocity path_velocity;
   st_rcs rcs;
   st_tu tu;
+  float compute_area = 0.0;
+  float mem_area = 0.0;
   float total_area = 0.0;
 };
 
@@ -135,12 +156,13 @@ class Band {
   }
 
 
-  float calc_links_per_wafer(float wafer_unconstrained_ppus, path_proc_unit* ppu, drbe_wafer& w, bool verbose = false) {
+  float calc_links_per_wafer(float wafer_unconstrained_ppus, path_proc_unit* ppu, drbe_wafer& w, WaferStats & w_stats, bool verbose = false) {
 
     //We're goint to just cut the biggest square we can out, and assume that's what we'll
     //use all over.
+    float GE_chiplets_per_wafer = w_stats.num_ge_chiplet / w_stats.num_wafer;
 
-    float num_wafers = wafer_unconstrained_ppus / (w.num_units() * ppu->_ppus_per_chiplet);
+    float num_wafers = wafer_unconstrained_ppus / (w.num_units() * ppu->_ppus_per_chiplet - GE_chiplets_per_wafer);
     
     float links_per_wafer = num_links() / num_wafers;
 
@@ -602,23 +624,7 @@ class Band {
 
 };
 
-struct WaferStats {
-  // Wafer level
-  int num_wafer = 0; // number of wafer that required to support this scenario
-  int target_num_wafer = 0; // the number of wafer we want for this scenario
-  int wafer_io_limit = 0; // the target wafer io
-  float tech_scaling = 0.0;
-  // chiplet level
-  float chiplet_io_layer = 0.0;
 
-  // Compute Area needed
-  int num_ppu_chiplet = 0;
-  int num_ge_chiplet = 0;
-
-  // percentage of scenario supported scenatio during finding the GE
-  // GE ratio 0% -> 100%
-  float percentage_support_scenario [100];
-};
 
 struct GEStats {
 // ---------------- Geometry Engine -----------------
@@ -670,6 +676,10 @@ struct GEStats {
       << b._avg_coef_per_object << ", "
       // Range
       << b._range << ", "
+      // GE total area
+      << ge_stat.total_area << ", "
+      << ge_stat.compute_area << ", "
+      << ge_stat.mem_area << ", "
       // GE fidelity
       << ge_stat.coordinate_trans.ta1_scene_upd_rate << ", "
       << ge_stat.nr_engine.interpolation_ord << ", "
@@ -683,7 +693,6 @@ struct GEStats {
       << ge_stat.rcs.angle << ", "
       << ge_stat.rcs.freq << ", "
       << ge_stat.rcs.plzn << ", "
-      << ge_stat.rcs.samples << ", "
       // Coordinate
       << ge_stat.coordinate_trans.compute << ", "
       << ge_stat.coordinate_trans.memory << ", "
@@ -845,26 +854,27 @@ class ScenarioGen {
     int i = 0;
     for(auto & b : scene_vec){
       // Global
-      ge_stats.ge_stat_vec[i].global_fid.upd_rate = 50e-6; //CASE: nominal 5e-6 max 50e-6
+      ge_stats.ge_stat_vec[i].global_fid.upd_rate = 1e-3; //CASE: nominal 50e-6 max 5e-6
       ge_stats.ge_stat_vec[i].global_fid.num_obj = b._n_obj;
       ge_stats.ge_stat_vec[i].global_fid.num_path = b.num_paths();
       // Coordinate Transformation
       ge_stats.ge_stat_vec[i].coordinate_trans.ta1_scene_upd_rate = 1e-3; 
       // NR Engine
-      ge_stats.ge_stat_vec[i].nr_engine.interpolation_ord = 6; //CASE: nominal 4 max 6
+      ge_stats.ge_stat_vec[i].nr_engine.interpolation_ord = 4; //CASE: nominal 4 max 6
       ge_stats.ge_stat_vec[i].nr_engine.conv_fed = 2;
       // Antenna
-      ge_stats.ge_stat_vec[i].antenna_gain.order = 5;
+      ge_stats.ge_stat_vec[i].antenna_gain.order = 4;
       ge_stats.ge_stat_vec[i].antenna_gain.num_antenna = 16;
       ge_stats.ge_stat_vec[i].antenna_gain.res_angle = 2;
       ge_stats.ge_stat_vec[i].antenna_gain.dict_dim = 800; //CASE: nominal 400 max 800
       // RCS
       ge_stats.ge_stat_vec[i].rcs.order = 6; //CASE: nominal 4 max 6
-      ge_stats.ge_stat_vec[i].rcs.points = 10; //CASE: nominal 20 max 10
+      ge_stats.ge_stat_vec[i].rcs.points = 1; //CASE: nominal 20 max 10
+      ge_stats.ge_stat_vec[i].rcs.plates = 1;
+      ge_stats.ge_stat_vec[i].rcs.pntAngle = 1;
       ge_stats.ge_stat_vec[i].rcs.angle = 1;
       ge_stats.ge_stat_vec[i].rcs.freq = 1;
       ge_stats.ge_stat_vec[i].rcs.plzn = 4; //CASE: nominal 1 max 4
-      ge_stats.ge_stat_vec[i].rcs.samples = 10;
       i++;
     }
   }

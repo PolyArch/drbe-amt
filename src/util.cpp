@@ -36,6 +36,10 @@ std::ofstream print_ge_tradeoff(std::string filename){
               << "avg-coef-per-obj, "
               // Range
               << "range, "
+              // GE Total Area
+              << "ge-total-area, "
+              << "ge-compute-area, "
+              << "ge-mem-area, "
               // GE fidelity
               << "ta1-upd-rate, "
               << "nr-engine-interpolation_ord, "
@@ -49,7 +53,6 @@ std::ofstream print_ge_tradeoff(std::string filename){
               << "rcs-angle, "
               << "rcs-freq, "
               << "rcs-plzn, "
-              << "rcs-samples, "
               // Coordinate
               << "coor-trans-compute, coor-trans-memory, coor-trans-bandwidth, coor-trans-latency, "
               // NR Engine
