@@ -6,7 +6,8 @@ enum analysis {
   ANALYSIS_WAFER_SCALING,
   ANALYSIS_HW_CONFIG,
   SENSITIVITY_TECH_SCALING,
-  SENSITIVITY_WAFER_IO
+  SENSITIVITY_WAFER_IO,
+  ANALYSIS_PARETO_AFTER_GE
 };
 
 static struct option long_options[] = {
@@ -27,6 +28,7 @@ static struct option long_options[] = {
     {"sense-wafer-io",     no_argument,       nullptr, SENSITIVITY_WAFER_IO},
 
     {"print-pareto",       no_argument,       nullptr, ANALYSIS_PARETO},
+    {"print-pareto-after-ge",no_argument,     nullptr, ANALYSIS_PARETO_AFTER_GE},
     {"print-wafer-scaling",no_argument,       nullptr, ANALYSIS_WAFER_SCALING},
     {"print-hw-config",    no_argument,       nullptr, ANALYSIS_HW_CONFIG},
     {0, 0, 0, 0,},
@@ -662,7 +664,6 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
       if(current_band_ge_area <= ge_area && current_band_ppu_chiplet <= ppu_chiplet) num_support_scenario++;
       band_idx ++;
     }
-    w_stats.ge_chiplet2support_scenario_percentage[ge_chiplet] = num_support_scenario / scene_vec.size();
     if(num_support_scenario > most_num_scenario_supported){
       most_num_scenario_supported = num_support_scenario;
       most_scenario_ge_chiplet = ge_chiplet;
@@ -988,7 +989,6 @@ void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w, WaferStats & w_sta
         w.set_limit_wafer_io(true);
       }
       w_stats.num_wafer = num_wafers;
-      w_stats.ge_chiplet2support_scenario_percentage = new float[num_wafers * w.num_units()];
 
       for(; fixed_platforms <= 10000; fixed_platforms +=1){
       
@@ -1043,6 +1043,7 @@ int main(int argc, char* argv[]) {
   bool print_pareto = false;
   bool print_wafer_scaling = false;
   bool print_hw_config = false;
+  bool print_pareto_after_ge = false;
 
   int num_wafers_target=1;
 
@@ -1076,6 +1077,7 @@ int main(int argc, char* argv[]) {
       case ANALYSIS_PARETO:        print_pareto = true; break;
       case ANALYSIS_WAFER_SCALING: print_wafer_scaling = true; break;
       case ANALYSIS_HW_CONFIG:     print_hw_config = true; break;
+      case ANALYSIS_PARETO_AFTER_GE: print_pareto_after_ge = true; break;
 
       default: exit(1);
     }
@@ -1255,7 +1257,12 @@ int main(int argc, char* argv[]) {
       }
     }
 
-    
+    // Evaluate PPU so that the number of ppu chiplet
+    evaluate_ppu(best_ppu,scene_vec,w, ppu_stats,w_stats,num_wafers_target,verbose /*verbose*/);
+
+    if(print_pareto_after_ge) {
+      top_k_pareto_scenarios(best_ppu,scene_vec,w,w_stats, 6,num_wafers_target);
+    }
 
   }
   if(dump_file_name != "") ge_tradeoff.close();

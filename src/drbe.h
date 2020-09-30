@@ -28,7 +28,7 @@ struct WaferStats {
 
   // percentage of scenario supported scenatio during finding the GE
   // GE ratio 0% -> 100%
-  float * ge_chiplet2support_scenario_percentage;
+  //float * ge_chiplet2support_scenario_percentage;
 };
 
 // compute, memory, bandwidth, latency
