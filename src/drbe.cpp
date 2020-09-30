@@ -4,7 +4,9 @@ using namespace std;
 enum analysis {
   ANALYSIS_PARETO=128,
   ANALYSIS_WAFER_SCALING,
-  ANALYSIS_HW_CONFIG
+  ANALYSIS_HW_CONFIG,
+  SENSITIVITY_TECH_SCALING,
+  SENSITIVITY_WAFER_IO
 };
 
 static struct option long_options[] = {
@@ -20,6 +22,10 @@ static struct option long_options[] = {
     {"wafer-io",           no_argument,       nullptr, 'w',},
     {"layer",              required_argument, nullptr, 'l',},
     {"dump-file-name",     required_argument, nullptr, 'f',},
+
+    {"sense-tech-scaling", no_argument,       nullptr, SENSITIVITY_TECH_SCALING},
+    {"sense-wafer-io",     no_argument,       nullptr, SENSITIVITY_WAFER_IO},
+
     {"print-pareto",       no_argument,       nullptr, ANALYSIS_PARETO},
     {"print-wafer-scaling",no_argument,       nullptr, ANALYSIS_WAFER_SCALING},
     {"print-hw-config",    no_argument,       nullptr, ANALYSIS_HW_CONFIG},
@@ -808,12 +814,12 @@ void evaluate_ppu(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer&
     ppu_stats.ppu_stat_vec[i].num_ppu_chiplet = wafer_unconstrained_ppus / (ppu->_ppus_per_chiplet);
 
     float links_per_wafer = b.calc_links_per_wafer(wafer_unconstrained_ppus,ppu,w,w_stats,verbose);
+
     float num_wafers = b.num_links() / links_per_wafer;
 
     assert(num_wafers>0);
 
     float wafer_constrained_ppus = num_wafers * w.num_units() * ppu->_ppus_per_chiplet;
-
 
     // For status purposes, I need to use algorithmic links to make a fair comparison
     // between channel models
@@ -893,7 +899,10 @@ path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafe
       int bits_per_side=t._chiplet_io_bits_per_mm2*side_length;    
       int total_ins_per_side = (int)(bits_per_side/32.0); //divide by 32 bit width
 
-      int remain=total_ins_per_side - (2*2 + agg_network*2);
+      float ratio_of_input_to_output = (float) OUTPUT_BITWIDTH / (float) INPUT_BITWIDTH;
+
+      // we multiply both of these expressions by 2 because we need both inputs and outputs
+      int remain=total_ins_per_side - (2*2 + agg_network*2*ratio_of_input_to_output);
       if(remain < 2) break;
 
 
@@ -1009,7 +1018,7 @@ void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w, WaferStats & w_sta
      }
    }
 
-   printf("num_wafers num_platforms\n");
+   printf("num_wafers num_platforms num_links, mem_ratio\n");
    for(int num_wafers=1; num_wafers < MAX_WAFERS; ++num_wafers) {
      printf("%8d %8d %8d %8.2f\n", num_wafers, std::get<0>(metric[num_wafers]),
                                             std::get<1>(metric[num_wafers]),
@@ -1027,7 +1036,7 @@ int main(int argc, char* argv[]) {
   bool aidp = false;
   bool challenge_scenario=false;
   int num_scenarios=1000;
-  bool limit_wafer_io=false;
+  bool limit_wafer_io=true; //DEFAULT IS TRUE
   int chiplet_io_layer=4;
   bool easy_scenario=false;
 
@@ -1040,6 +1049,10 @@ int main(int argc, char* argv[]) {
   string dump_file_name="";
   tech_params t;
 
+  bool sense=false;
+  bool sense_tech_scaling=false;
+  bool sense_wafer_io=false;
+
   int opt;
   while ((opt = getopt_long(argc, argv, "vgkdprcn:wl:f:et:", long_options, nullptr)) != -1) {
     switch (opt) {
@@ -1050,11 +1063,15 @@ int main(int argc, char* argv[]) {
       case 'v': verbose = true; break;
       case 'g': verbose_ge_info = true; break;
       case 'n': num_scenarios = atoi(optarg); break;
-      case 'w': limit_wafer_io = true; break;
+      case 'w': limit_wafer_io = false; break;
       case 'e': easy_scenario = true; break;
       case 'l': chiplet_io_layer = atoi(optarg); break;
       case 't': num_wafers_target = atoi(optarg); break;
       case 'f': dump_file_name = optarg; break;
+
+      case SENSITIVITY_TECH_SCALING:        {sense=true; sense_tech_scaling = true; break;}
+      case SENSITIVITY_WAFER_IO:            {sense=true; sense_wafer_io = true; break;}
+
 
       case ANALYSIS_PARETO:        print_pareto = true; break;
       case ANALYSIS_WAFER_SCALING: print_wafer_scaling = true; break;
@@ -1062,6 +1079,10 @@ int main(int argc, char* argv[]) {
 
       default: exit(1);
     }
+  }
+
+  if(limit_wafer_io==false) {
+    cout << "WARNING: Unlimited Wafer IO.  (this only pertains to sensitivity analysis)\n";
   }
 
   argc -= optind;
@@ -1084,8 +1105,10 @@ int main(int argc, char* argv[]) {
 
   std::vector<Band> scene_vec;
   // Generate Scenarios
+  // Note that "easy_scenario" is ignored unless num_scenarios == 1
   ScenarioGen::gen_scenarios(scene_vec, direct_path, aidp,
-                             num_scenarios);
+                             num_scenarios, 0, !easy_scenario);
+
 
   // Print the header for ge_trade
   std::ofstream ge_tradeoff;
@@ -1093,6 +1116,7 @@ int main(int argc, char* argv[]) {
 
   // You can run different experiments by uncommenting different loops here ... we should make this
   // more configurable in the future. : )
+
   //for(int ppu_area = 20; ppu_area < 21; ppu_area+=5) {
   int ppu_area=20;
   drbe_wafer w(&t,300,(float)ppu_area);
@@ -1108,14 +1132,31 @@ int main(int argc, char* argv[]) {
   //    b._frac_clutter = frac_clutter/100.0f;
   //  }
 
-  //printf("\nTechnology Density Experiment: Increase the Density (factor \"v\" below)\n");
-  float old = 1;//t.area_multiplier();//t.area_multiplier();//w.wafer_io();//t.area_multiplier();
-  float v_range = 1;
-  float factor = 2;
+
+
+  float start_v = 2;
+  float end_v = 2.01; 
+  float v_factor = 1.4142857;
+
+  if(sense_tech_scaling) {
+    printf("\nSensitivity to Technology Density (factor \"v\" below)\n");
+    start_v = t.area_multiplier();
+    end_v = start_v * 4+0.001;
+  } else if(sense_wafer_io) {
+    printf("\nSensitivity to Wafer IO (factor \"v\" below)\n");
+    start_v = 10; //w.io_tb_per_sec();
+    end_v = 200+0.001; 
+  } else  {
+     
+  }
+
   //factor = factor * factor;
-  for(float v = old; v < old*v_range+0.01; v*=factor) {
-    t.set_area_multiplier(v);
-    //w.set_wafer_io(v);
+  for(float v = start_v; v < end_v; v*=v_factor) {
+    if(sense_tech_scaling) {
+      t.set_area_multiplier(v);
+    } else if(sense_wafer_io) {
+      w.set_io_tb_per_sec(v);
+    }
     //int num_wafers_target=v;
     
     //if(num_wafers_target == 1){

@@ -8,6 +8,10 @@
 #define SCALAR_MACC_PER_COMPLEX_MACC (4)
 #define SCALAR_MACC_PER_COMPLEX_ADD (1)
 
+#define INPUT_BITWIDTH  (32)
+#define OUTPUT_BITWIDTH (64)
+#define COEF_BITWIDTH   (32)
+
 using namespace std;
 
 class tech_params {
@@ -22,6 +26,7 @@ public:
   float ge_comp_density(){return _area_multiplier * _ge_comp_density;}
   float ge_dram_MB(){return _area_multiplier * _ge_dram_MB_per_mm2;}
   float ge_freq(){return _ge_clock_rate;}
+  float ppu_freq() {return _ppu_clock_rate;}
 
   //These are from uneeb's calculations
   //2.56 Tb/s per side, if each side is 4.4mm
@@ -34,7 +39,8 @@ private:
   float _fp_macc_per_mm2=400; //?
   float _int_macc_per_mm2=700*4;
   float _sram_Mb_per_mm2=8.1f;
-  
+  float _ppu_clock_rate = 1e9;// Clock of the PPU is 1 GHz
+
   // GE Params:
   float _ge_dram_MB_per_mm2 = 276; //MegaBytes per mm^2
   float _ge_clock_rate = 2e9;// Clock of the Geometry Engine is 2GHz
@@ -76,7 +82,7 @@ public:
   }
   int _in_degree=8;
   int _out_degree=8;
-  int _bitwidth=32;
+  int _bitwidth=INPUT_BITWIDTH;
 };
 
 class path_proc_unit;
@@ -121,6 +127,7 @@ public:
     _coef_router._out_degree=8; // don't really think we need much on coef router
     _output_router._in_degree=25;
     _output_router._out_degree=25; //need much mroe on output router
+    _output_router._bitwidth=OUTPUT_BITWIDTH;
   }  
  
   path_proc_unit(const path_proc_unit &from) : hw_unit(from._t), 
@@ -285,6 +292,7 @@ public:
   drbe_wafer(tech_params* t, float diameter, float chiplet_area) : hw_unit(t) {
     _wafer_diameter=diameter;
     _chiplet_area=chiplet_area;
+    set_io_tb_per_sec(_io_tb_per_sec);
   }
 
   virtual float area() {
@@ -344,18 +352,30 @@ public:
     }
   }
 
-
-  void set_wafer_io(int v) {
-    _max_input=v;
-    _max_output=v;
-  }
-  int wafer_io() {
-    return _max_input;
+  float io_tb_per_sec() {
+    return _io_tb_per_sec;
   }
 
+  void set_io_tb_per_sec(float v) {
+    _io_tb_per_sec=v;
 
-  int max_input()  {return _max_input;}
-  int max_output() {return _max_output;}
+    // we need to decide i/o distribution
+    int remaining_input_ios = (_io_tb_per_sec) / INPUT_BITWIDTH / _t->ppu_freq() 
+                             * 1024 * 1024 * 1024 * 1024;
+
+    _input_sig_io = min(200,remaining_input_ios/2);
+
+    remaining_input_ios -= _input_sig_io;
+    int remaining_agg_ios = remaining_input_ios * (float) INPUT_BITWIDTH / (float) OUTPUT_BITWIDTH;
+
+    _agg_input_io  = remaining_agg_ios/2;
+    _agg_output_io = remaining_agg_ios/2; 
+    printf("input_sig %d, agg_input_io %d\n", _input_sig_io, _agg_input_io);
+  }
+
+  int input_sig_io()  {return _input_sig_io;}
+  int agg_input_io()  {return _agg_input_io;}
+  int agg_output_io() {return _agg_output_io;}
 
 private:
   int _wafer_diameter=0; //mm^2
@@ -363,7 +383,11 @@ private:
   int _num_units=0;
   bool _limit_wafer_io=false;
   path_proc_unit* _ppu=0;
-  int _max_input=200;
-  int _max_output=200;
+
+  float _io_tb_per_sec=100;
+  int _input_sig_io=0;
+  int _agg_input_io=0;
+  int _agg_output_io=0;
+
 };
 

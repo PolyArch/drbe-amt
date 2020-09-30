@@ -144,15 +144,20 @@ class Band {
   //}
 
   //This only thinks about inputs, since outputs are similar
-  float max_systems_per_wafer(int wafer_inputs) { 
+  float max_systems_per_wafer(drbe_wafer& w) { 
+    int max_by_in = w.input_sig_io();
+
+    int max_by_agg;
     if(_is_direct_path) {
-      return wafer_inputs / (float)(max(_n_tx-1,1)); 
+      max_by_agg = w.agg_input_io() / (float)(max(_n_tx-1,1));                
     } else if (_is_aidp) {
       //multiply by 1.25 just to be conservative, got help us if we get this wrong
-      return wafer_inputs / (1 + (_k_rcs_points-1)* _avg_frac_full_objects * 1.25);
+      max_by_agg = w.agg_input_io() / (1 + (_k_rcs_points-1)* _avg_frac_full_objects * 1.25);
     } else {
-      return wafer_inputs;
+      max_by_agg = w.agg_input_io() / 2; //because we don't know how to get top and bottom
     }
+    //printf("max_by_in %d, max_by_agg %d\n",max_by_in,max_by_agg);
+    return std::min(max_by_in,max_by_agg);
   }
 
 
@@ -172,11 +177,11 @@ class Band {
 
     float systems_per_wafer = sqrt(links_per_wafer); 
 
-    systems_per_wafer = min(systems_per_wafer,max_systems_per_wafer(w.max_input()));
-
+    systems_per_wafer = min(systems_per_wafer,max_systems_per_wafer(w));
+    
     links_per_wafer = systems_per_wafer * systems_per_wafer;
 
-    return links_per_wafer;
+    return max(links_per_wafer,1.0f);
   }
 
   float ppus_per_band(path_proc_unit& ppu, drbe_wafer& w, int& failures, bool verbose=false) {
@@ -481,8 +486,8 @@ class Band {
       frac_slow = 0;
       frac_fast = 1;
     } else {
-      frac_slow  = (float)(_n_slow) / ((float)_n_obj);
-      frac_fast  = (float)(_n_fast) / ((float)_n_obj);
+      frac_slow  = (float)(_n_slow) / ((float)(_n_fast+_n_slow));
+      frac_fast  = (float)(_n_fast) / ((float)(_n_fast+_n_slow));
     }
 
     float avg_coef_bw =0; //average bandwidth in bits/ns
