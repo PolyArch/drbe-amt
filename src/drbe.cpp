@@ -174,7 +174,7 @@ std::vector<float>& Band::normalized_vec() {
 
   // ---------------- Geometry Engine -----------------
   // Coordinate Translation
-  void Band::coordinate_trans_cmbl(single_band_ge_stats & fed_cmbl){
+  void coordinate_trans_cmbl(ge_stat_per_band & fed_cmbl){
     float NO = fed_cmbl.global_fid.num_obj;
     float SU = fed_cmbl.coordinate_trans.ta1_scene_upd_rate;
     float C = NO*(13 + ComputeTable(Cos,Corl_C)+
@@ -189,7 +189,7 @@ std::vector<float>& Band::normalized_vec() {
     fed_cmbl.coordinate_trans.set_cmbl(C, M, B, L);
   }
   // NR Engine
-  void Band::nr_engine_cmbl(single_band_ge_stats & fed_cmbl){
+  void nr_engine_cmbl(ge_stat_per_band & fed_cmbl){
     // Given Fidelites (Change these according to your blocks inputs)
     float IO = fed_cmbl.nr_engine.interpolation_ord;
     float SU = fed_cmbl.coordinate_trans.ta1_scene_upd_rate;
@@ -234,7 +234,7 @@ std::vector<float>& Band::normalized_vec() {
     fed_cmbl.nr_engine.set_cmbl(C, M, B, L);
   }
   // Relative Orientation
-  void Band::relative_orientation_cmbl(single_band_ge_stats & fed_cmbl){
+  void relative_orientation_cmbl(Band & b, ge_stat_per_band & fed_cmbl){
     //NO = NumberofObjects; // don"t think this is correct should be paths
     float NO = fed_cmbl.global_fid.num_obj;
     float TU = fed_cmbl.global_fid.upd_rate;
@@ -274,15 +274,16 @@ std::vector<float>& Band::normalized_vec() {
     fed_cmbl.relative_orientation.set_cmbl(C, M, B, L);
   }
   // Antenna Gain
-void Band::antenna_gain_cmbl(single_band_ge_stats & fed_cmbl){
+void antenna_gain_cmbl(Band & b, ge_stat_per_band & fed_cmbl){
   float no_antenna=fed_cmbl.antenna_gain.num_antenna;
   float o=fed_cmbl.antenna_gain.order;
   float Tu=fed_cmbl.global_fid.upd_rate;
   float K=fed_cmbl.antenna_gain.res_angle;
   float no_paths=fed_cmbl.global_fid.num_path;
-  float no_Tx=_n_tx * _n_bands; //_n_tx and _n_tx
-  float no_Rx=_n_rx * _n_bands;
+  float no_Tx=b._n_tx * b._n_bands; //_n_tx and _n_tx
+  float no_Rx=b._n_rx * b._n_bands;
   float dict_size=fed_cmbl.antenna_gain.dict_dim;
+  int general = fed_cmbl.antenna_gain.general;
   
   float C=0; //Compute in 64-bit MAC
   float M=0; //Memory in terms of 64 bit FP Units
@@ -301,44 +302,64 @@ void Band::antenna_gain_cmbl(single_band_ge_stats & fed_cmbl){
       L=20;
   }else if(o==2){
       C=C+2*(8)+1;
-      C=no_paths*(C/Tu);
-      M=M+(5*(no_Tx + no_Rx)+1);
-      B=B+((5*(no_paths*2)+1)/Tu); //getting each antenna's gains and beamwidths per update time
+      C=no_paths*(2*C/Tu);
+      M=M+(3*(no_Tx + no_Rx)+1);
+      B=B+((3*(no_paths*2)+1)/Tu); 
       L=21;
   }else if(0==3){
-      C=C+2*(8)+1;
-      C=no_paths*(C/Tu);
-      M=M+(6*(no_Tx + no_Rx));
-      B=B+((6*(no_paths*2))/Tu); //getting each antenna's gains and beamwidths per update time
-      L=21;
+        C=C+2*(8)+1;
+        C=no_paths*(2*C/Tu);
+        M=M+(4*(no_Tx + no_Rx));
+        B=B+((4*(no_paths*2))/Tu); //getting each antenna's gains and beamwidths per update time
+        L=21;
   }else if(o==4){
-      K=pow(2, (ceil(log2(180/K))));
-      C=C+2*(8)+1; //to get 2nd/3rd order gains
-      float C1=K*(2*ComputeTable(Cos,Corl_C)+3)+no_antenna+(no_antenna/2)*log2(no_antenna)+no_antenna+K+(K/2)*log2(K)+2*K;
-      C=C+C1;
-      C=2*C+1;
-      C=no_paths*(C/Tu);
-      M=M+(6*(no_Tx + no_Rx))+(no_Tx + no_Rx)*(4*K+2*no_antenna); //(2K+N)2 (bytes to bits)
-      B=B+((6*(no_paths*2))/Tu)+(4*K+2*no_antenna)*no_paths/Tu;
-      L=21+ceil(log2(C1));
-  }else if(o==5){
-      float N=(180/K)*(90/K)*(90/K);
-      float n=(180/K);
-      M=(no_Tx + no_Rx)*(n*dict_size+dict_size*N);
-      C=C+1620+dict_size; //assuming 540 MACs for absolute value calc
-      C=no_paths*(C/Tu);
-      B=B+((dict_size*2)*(no_paths*2)/Tu); //getting 3 numbers from memory per update time;
-      L=20+ceil(log2(1620))+ceil(log2(dict_size));
+        float angleres=pow(2, (ceil(log2(180/angleres)))); // number of bins
+        
+        C=C+no_antenna*(2); //to get second order beam pattern in angular domain
+        C=C+no_antenna+(no_antenna/2)*log2(no_antenna); // to convert to AWV domain
+        C=C+no_antenna; // point-wise multiplication of window function and beam pattern
+        C=C+angleres+(angleres/2)*log2(angleres); // converting it into angular domain wrt number of bins
+        
+        C=2*C; // same calculations for elevation dimension
+        C=C+angleres; // K element wise multiplications of elevation and azimuth dimension
+        C=no_paths*(2*C/Tu); // entire calculation for no of paths per update time.
+    
+        float no_inputs=4;
+        M=M+no_inputs*(no_Tx + no_Rx)+no_antenna; // window precompute and store.
+        B=B+((no_inputs*no_paths*2)+(no_antenna*no_paths*2))/Tu;
+  }else if(o==5 && general == 0){
+        int angleres=pow(2, (ceil(log2(180/angleres)))); // number of bins
+        
+        C=C+no_antenna*(2); //to get second order beam pattern in angular domain
+        C=C+no_antenna+(no_antenna/2)*log2(no_antenna); // to convert to AWV domain
+        C=C+no_antenna; // point-wise multiplication of window function and beam pattern
+        C=C+angleres+(angleres/2)*log2(angleres); // converting it into angular domain wrt number of bins
+        
+        C=2*C; // same calculations for elevation dimension
+        C=C+angleres; // K element wise multiplications of elevation and azimuth dimension
+        C=no_paths*(2*C/Tu); // entire calculation for no of paths per update time.
+    
+        int no_inputs=4;
+        M=M+no_inputs*(no_Tx + no_Rx)+no_antenna; // window precompute and store.
+        B=B+((no_inputs*no_paths*2)+(no_antenna*no_paths*2))/Tu;
+  }else if(o==5 && general == 1){
+        int N=floor((180/K)* pow((90/K), 2) ); // needs to be integer
+        int n=floor((180/K)); // needs to be integer
+        M=(no_Tx + no_Rx)*(n*dict_size+2*3*N); //n*dict_size+2*T0*N
+        C=C+2*((4*ComputeTable(Div, Corl_C)+4)+(2*3-1+6));
+        C=no_paths*(C/Tu);
+        B=B+(3*(no_paths*2)/Tu); //getting To numbers from memory for one path per update time;
+    
   }
 
   fed_cmbl.antenna_gain.set_cmbl(C, M, B, L);
 }
 // Path Gain and Velocity
-void Band::path_gain_cmbl(single_band_ge_stats & fed_cmbl){
+void path_gain_cmbl(Band & b, ge_stat_per_band & fed_cmbl){
   // Given Fidelites (Change these according to your blocks inputs)
   float SU = fed_cmbl.coordinate_trans.ta1_scene_upd_rate;
   float TU = fed_cmbl.global_fid.upd_rate;
-  float NF = num_paths() * 2;
+  float NF = b.num_paths() * 2;
   
   // compute table comtains the equivilent MAC operational values of the
   // Sine/exponent/division functions etc.
@@ -415,7 +436,7 @@ void Band::path_gain_cmbl(single_band_ge_stats & fed_cmbl){
 }
 
 // RCS
-void Band::rcs_cmbl(single_band_ge_stats & fed_cmbl){
+void rcs_cmbl(ge_stat_per_band & fed_cmbl){
   // TU - Update time
   // PT - Number of paths
   // OB - Number of objects
@@ -433,57 +454,56 @@ void Band::rcs_cmbl(single_band_ge_stats & fed_cmbl){
   // Order 0
   if (fed_cmbl.rcs.order == 0){
       C = 0;
-      M = 1;
-      B = 1;
-      L = 0;
+      M = OB*1;
+      B = (PT/TU)*1;
+      L = 20;
   }
   // Order 1
   else if (fed_cmbl.rcs.order == 1){
-      std::cout << "RCS fidelity order not supported.";
-      C = 0;
-      M = 0;
-      B = 0;
-      L = 0;
+      C = (PT/TU)*(7 + 2*ComputeTable(Cos,Corl_C) + 3*ComputeTable(Sin,Corl_C) + 1*ComputeTable(Cosi,Corl_C));
+      M = OB*250e3;
+      B = (PT/TU)*3;
+      L = 20 + ComputeTable(Cos,Corl_L) + ComputeTable(Cosi,Corl_L) + ceil(log2(7));
   }
 
   // Order 2
   else if (fed_cmbl.rcs.order == 2){
-      C = PT*(5 + 3*fed_cmbl.rcs.points + 2*ComputeTable(Cos,Corl_L) + 3*ComputeTable(Sin,Corl_C))/TU;
+      C = (PT/TU)*(4*fed_cmbl.rcs.points + 7 + 4*ComputeTable(Cos,Corl_C) + 6*ComputeTable(Sin,Corl_C));
       M = OB*4*fed_cmbl.rcs.points;
-      B = PT*4*fed_cmbl.rcs.points/TU;
-      L = 0;
+      B = (PT/TU)*4*fed_cmbl.rcs.points;
+      L = 20 + ComputeTable(Cos,Corl_L) + ceil(log2(4*fed_cmbl.rcs.points + 7));
   }
 
   // Order 3
   else if (fed_cmbl.rcs.order == 3){
-      C = PT*(5 + 7*fed_cmbl.rcs.points + 2*ComputeTable(Cos,Corl_L) + 3*ComputeTable(Sin,Corl_C))/TU;
-      M = OB*7*fed_cmbl.rcs.points;
-      B = PT*7*fed_cmbl.rcs.points/TU;
-      L = 0;
+      C = (PT/TU)*(8*fed_cmbl.rcs.points + 7 + 4*ComputeTable(Cos,Corl_C) + 6*ComputeTable(Sin, Corl_C));
+        M = OB*7*fed_cmbl.rcs.points;
+        B = (PT/TU)*7*fed_cmbl.rcs.points;
+        L = 20 + ComputeTable(Cos,Corl_L) + ceil(log2(7 + 7*fed_cmbl.rcs.points));
   }
 
   // Order 4
   else if (fed_cmbl.rcs.order == 4){
-      C = PT*(5 + 12*fed_cmbl.rcs.points + 2*ComputeTable(Cos,Corl_L) + 3*ComputeTable(Sin,Corl_C))/TU;
-      M = OB*8*fed_cmbl.rcs.points;
-      B = PT*8*fed_cmbl.rcs.points/TU;
-      L = 0;
+        C = (PT/TU)*((4 + 4*fed_cmbl.rcs.pntAngle)*fed_cmbl.rcs.points + 7 + 4*ComputeTable(Cos,Corl_C) + 6*ComputeTable(Sin,Corl_C));
+        M = OB*(5 + 2*fed_cmbl.rcs.pntAngle)*fed_cmbl.rcs.points;
+        B = (PT/TU)*(5 + 2*fed_cmbl.rcs.pntAngle)*fed_cmbl.rcs.points;
+        L = 20 + ComputeTable(Cos,Corl_L) + ceil(log2(7 + (4 + 4*fed_cmbl.rcs.pntAngle)*fed_cmbl.rcs.points));
   }
 
   // Order 5
   else if (fed_cmbl.rcs.order == 5){
-      std::cout << "RCS fidelity order not supported.";
-      C = 0;
-      M = 0;
-      B = 0;
-      L = 0;
+        C = (PT/TU)*(((4 + 4*fed_cmbl.rcs.pntAngle)*fed_cmbl.rcs.points + 7 + 4*ComputeTable(Cos,Corl_C) + 6*ComputeTable(Sin,Corl_C))
+            + (15*fed_cmbl.rcs.plates + 4 + 4*ComputeTable(Cos,Corl_C) + 6*ComputeTable(Sin,Corl_C)));
+        M = OB*((5 + 2*fed_cmbl.rcs.pntAngle)*fed_cmbl.rcs.points + 8*fed_cmbl.rcs.plates);
+        B = (PT/TU)*((5 + 2*fed_cmbl.rcs.pntAngle)*fed_cmbl.rcs.points + 8*fed_cmbl.rcs.plates);
+        L = 20 + ComputeTable(Cos,Corl_L) + ceil(log2(((4 + 4*fed_cmbl.rcs.pntAngle)*fed_cmbl.rcs.points)+7) + (15*fed_cmbl.rcs.plates + 4));
   }
   // Order 6
   else if (fed_cmbl.rcs.order == 6){
-      C = 0;
-      M = OB*(360/fed_cmbl.rcs.angle)*(180/fed_cmbl.rcs.angle)*(360/fed_cmbl.rcs.angle)*(180/fed_cmbl.rcs.angle)*fed_cmbl.rcs.freq*fed_cmbl.rcs.plzn*fed_cmbl.rcs.samples;
-      B = PT*fed_cmbl.rcs.samples/TU;
-      L = 0;
+        C = 0.1; //Dummy
+        M = OB*(360/fed_cmbl.rcs.angle)*(180/fed_cmbl.rcs.angle)*(360/fed_cmbl.rcs.angle)*(180/fed_cmbl.rcs.angle)*fed_cmbl.rcs.freq*fed_cmbl.rcs.plzn*fed_cmbl.rcs.points*2;
+        B = (PT/TU)*fed_cmbl.rcs.points*2;
+        L = 20;
   }
   else{
       std::cout << "RCS fidelity order not supported.";
@@ -497,7 +517,7 @@ void Band::rcs_cmbl(single_band_ge_stats & fed_cmbl){
 }
 
 // Time Update
-void Band::tu_cmbl(single_band_ge_stats & fed_cmbl){
+void tu_cmbl(ge_stat_per_band & fed_cmbl){
   // Given Fidelites (Change these according to your blocks inputs)
   float TU = fed_cmbl.global_fid.upd_rate;
   float NF = fed_cmbl.global_fid.num_path; // no need to 2X factor
@@ -538,19 +558,55 @@ float Band::average_clutter(std::vector<Band> scene_vec) {
   return average_clutter;
 }
 
-void Band::get_ge_cmbl(single_band_ge_stats & fed_cmbl){
+void get_ge_cmbl(Band & b, ge_stat_per_band & fed_cmbl, drbe_wafer& w){
+  float utilization_fp_macc = 0.1;
+
   coordinate_trans_cmbl(fed_cmbl);
   nr_engine_cmbl(fed_cmbl);
-  relative_orientation_cmbl(fed_cmbl);
-  antenna_gain_cmbl(fed_cmbl);
-  path_gain_cmbl(fed_cmbl);
+  relative_orientation_cmbl(b, fed_cmbl);
+  antenna_gain_cmbl(b, fed_cmbl);
+  path_gain_cmbl(b, fed_cmbl);
   rcs_cmbl(fed_cmbl);
   tu_cmbl(fed_cmbl);
+
+  // Calculate the area for compute
+  // Total 64-bit MACC operation need per second
+  // Unit is 64-bit MACC / sec
+  float total_compute_per_sec = (fed_cmbl.coordinate_trans.compute + 
+                        fed_cmbl.nr_engine.compute +
+                        fed_cmbl.relative_orientation.compute +
+                        fed_cmbl.antenna_gain.compute +
+                        fed_cmbl.path_velocity.compute +
+                        fed_cmbl.rcs.compute +
+                        fed_cmbl.tu.compute) / fed_cmbl.global_fid.upd_rate / utilization_fp_macc;
+  // Total compute density can provide per second
+  // Unit is 64-bit MACC / mm2 / second
+  float compute_density_per_sec = w._t->ge_comp_density() * w._t->ge_freq();
+
+  // Unit is 64-bit
+  float total_mem = fed_cmbl.coordinate_trans.memory + 
+                    fed_cmbl.nr_engine.memory +
+                    fed_cmbl.relative_orientation.memory +
+                    fed_cmbl.antenna_gain.memory +
+                    fed_cmbl.path_velocity.memory +
+                    fed_cmbl.rcs.memory +
+                    fed_cmbl.tu.memory;
+  float mem_density = w._t->ge_dram_MB() * 1024 * 1024 * 8 / 64;
+
+  fed_cmbl.compute_area = total_compute_per_sec / compute_density_per_sec;
+  fed_cmbl.mem_area = total_mem / mem_density;
+
+  fed_cmbl.total_area = fed_cmbl.compute_area + fed_cmbl.mem_area;
 }
 
 int get_best_ppu() {
   return 0;
 }
+
+struct ppu_stat_per_band {
+  float num_ppu = 0.0;
+  float num_ppu_chiplet = 0.0;
+};
 
 struct PPUStats {
   float avg_coef_per_ppu=0;
@@ -563,50 +619,68 @@ struct PPUStats {
 
   // Histogram
   int wafer_histo[100000];
-  int wafer_ppu_ge_histo[100000];
   void print_wafer_histo() {
     for(int i = 1; i < 400; ++i) {
       printf("%d ",wafer_histo[i]);
     }
   }
 
-  void print_wafer_ge_ppu_histo(){
-    for(int i = 1; i < 400; ++i) {
-      printf("%d ",wafer_ppu_ge_histo[i]);
-    }
-  }
+  // Per Band Statistic
+  ppu_stat_per_band * ppu_stat_vec;
 };
 
-void dump_ge_tradeoff(ofstream & ge_tradeoff, std::vector<Band>& scene_vec){
-  for(auto & b : scene_vec){
-    ge_tradeoff << b.print_ge_tradeoff();
+void dump_ge_tradeoff(ofstream & ge_tradeoff, GEStats & ge_stats, std::vector<Band>& scene_vec, WaferStats & w_stats){
+  for(int i = 0; i < scene_vec.size(); i++){
+    ge_tradeoff << ge_stats.print_ge_tradeoff(scene_vec[i],ge_stats.ge_stat_vec[i], w_stats);
   }
 }
 
-void evaluate_ge(std::vector<Band>& scene_vec){  
+void evaluate_ge(std::vector<Band>& scene_vec, GEStats & ge_stats, drbe_wafer& w){
+  int i = 0;
   for(auto & b : scene_vec) {
-    b.get_ge_cmbl(b.ge_stat);
+    get_ge_cmbl(b, ge_stats.ge_stat_vec[i++], w);
   }
 }
 
-ge_core * design_ge_core_for_scenario(std::vector<Band>& scene_vec, drbe_wafer& w) {
+ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& scene_vec, drbe_wafer& w, WaferStats & w_stats, 
+                                      GEStats & ge_stats, PPUStats & ppu_stats) {
   ge_core* ge = new ge_core(&*w._t); //needs to be null so we don't delete a non-pointer
 
-  evaluate_ge(scene_vec);
+  evaluate_ge(scene_vec, ge_stats, w);
 
-  // TODO: how to design the ge based on the statistic of all scenarios
-  // ......
+  float total_chiplets = w.num_units() * w_stats.num_wafer;
+  int most_num_scenario_supported = 0;
+  int most_scenario_ge_chiplet = 0;
+  for(int ge_chiplet = 0; ge_chiplet < w.num_units() * w_stats.num_wafer; ge_chiplet ++){
+    float ge_area = ge_chiplet * 20; // each chiplet is 20 mm2
+    float ppu_chiplet = total_chiplets - ge_chiplet;
+    int band_idx = 0;
+    int num_support_scenario = 0;
+    for(auto & b : scene_vec){
+      float current_band_ppu_chiplet = ppu_stats.ppu_stat_vec[band_idx].num_ppu;
+      float current_band_ge_area = ge_stats.ge_stat_vec[band_idx].total_area;
+      if(current_band_ge_area <= ge_area && current_band_ppu_chiplet <= ppu_chiplet) num_support_scenario++;
+      band_idx ++;
+    }
+    w_stats.ge_chiplet2support_scenario_percentage[ge_chiplet] = num_support_scenario / scene_vec.size();
+    if(num_support_scenario > most_num_scenario_supported){
+      most_num_scenario_supported = num_support_scenario;
+      most_scenario_ge_chiplet = ge_chiplet;
+    }
+  }
+  w_stats.num_ge_chiplet = most_scenario_ge_chiplet;
+  w_stats.num_ppu_chiplet = total_chiplets - most_scenario_ge_chiplet;
 
   return ge;
 }
 
-bool model_succesful(path_proc_unit* ppu, Band& b, drbe_wafer& w, int max_wafers) {
+bool model_succesful(path_proc_unit* ppu, Band& b, drbe_wafer& w, WaferStats & w_stats, int max_wafers) {
 
   int failures=0;
   bool verbose=false;
 
   float wafer_unconstrained_ppus = b.ppus_per_band(*ppu,w,failures,verbose);
-  float links_per_wafer = b.calc_links_per_wafer(wafer_unconstrained_ppus,ppu,w,verbose);
+  float links_per_wafer = b.calc_links_per_wafer(wafer_unconstrained_ppus,ppu,w,w_stats,verbose);
   float num_wafers = b.num_links() / links_per_wafer;
 
   if(failures!=0) return false; // don't include this scenario if failed
@@ -614,14 +688,14 @@ bool model_succesful(path_proc_unit* ppu, Band& b, drbe_wafer& w, int max_wafers
   return ceil(num_wafers) <= max_wafers;
 }
 
-std::vector<Band> top_k_pareto_scenarios(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer& w, int k, int max_wafers) {
+std::vector<Band> top_k_pareto_scenarios(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer& w, WaferStats & w_stats, int k, int max_wafers) {
   std::vector<Band> top_k_scenarios;
   std::vector<Band> successful_pareto_bands;
 
   top_k_scenarios.resize(2);
 
   for(auto& band : scene_vec) {
-    bool success = model_succesful(ppu,band,w,max_wafers);
+    bool success = model_succesful(ppu,band,w,w_stats,max_wafers);
     if(!success) continue;
 
     // Make sure we are harder than any currently successful band
@@ -650,7 +724,7 @@ std::vector<Band> top_k_pareto_scenarios(path_proc_unit* ppu, std::vector<Band>&
       try_band=hardest_possible_band;
       
       if(try_band.increase_difficulty()) {
-        if(model_succesful(ppu,try_band,w,max_wafers)) {
+        if(model_succesful(ppu,try_band,w, w_stats, max_wafers)) {
           hardest_possible_band=try_band;
         } else {
           num_tries++;
@@ -722,8 +796,8 @@ std::vector<Band> top_k_pareto_scenarios(path_proc_unit* ppu, std::vector<Band>&
 }
 
 void evaluate_ppu(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer& w, 
-                   PPUStats& stats, int num_wafers_target, bool verbose = false) {
-  stats.total_failures=0;
+                   PPUStats& ppu_stats, WaferStats & w_stats, int num_wafers_target, bool verbose = false) {
+  ppu_stats.total_failures=0;
   float wafers=0;
   int total_in_target_wafer=0;
 
@@ -731,12 +805,15 @@ void evaluate_ppu(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer&
   float total_ppus = 0;
   float total_coef = 0;
 
+  int i = 0; // band index
   for(auto & b : scene_vec) {
 
-    float wafer_unconstrained_ppus = b.ppus_per_band(*ppu,w,stats.total_failures,verbose);
+    float wafer_unconstrained_ppus = b.ppus_per_band(*ppu,w, ppu_stats.total_failures,verbose);
     total_ppus += wafer_unconstrained_ppus;
+    ppu_stats.ppu_stat_vec[i].num_ppu = wafer_unconstrained_ppus;
+    ppu_stats.ppu_stat_vec[i].num_ppu_chiplet = wafer_unconstrained_ppus / (ppu->_ppus_per_chiplet);
 
-    float links_per_wafer = b.calc_links_per_wafer(wafer_unconstrained_ppus,ppu,w,verbose);
+    float links_per_wafer = b.calc_links_per_wafer(wafer_unconstrained_ppus,ppu,w,w_stats,verbose);
 
     float num_wafers = b.num_links() / links_per_wafer;
 
@@ -749,24 +826,25 @@ void evaluate_ppu(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer&
 
     total_coef += b._n_obj * b._avg_coef_per_object * b.algorithmic_num_links();
     total_links += b.algorithmic_num_links();
-    b.num_ppu_chiplet = wafer_constrained_ppus / ppu->_ppus_per_chiplet; 
+    w_stats.num_ppu_chiplet = wafer_constrained_ppus / ppu->_ppus_per_chiplet; 
     //printf("after count the chiplet from PPU, there are %d chiplets\n", b.num_ppu_chiplet);
 
 
     int int_num_wafers = ceil(num_wafers);
-    b.num_wafer = int_num_wafers;
+    //w_stats.num_wafer = int_num_wafers;
     if(int_num_wafers<=num_wafers_target) total_in_target_wafer++;
     wafers += int_num_wafers;
-    int max_histo_elem=sizeof(stats.wafer_histo)/sizeof(stats.wafer_histo[0]);
+    int max_histo_elem=sizeof(ppu_stats.wafer_histo)/sizeof(ppu_stats.wafer_histo[0]);
     int_num_wafers=max(0,min(max_histo_elem-1,int_num_wafers));
-    stats.wafer_histo[int_num_wafers]++;
+    ppu_stats.wafer_histo[int_num_wafers]++;
+    i++;
   }
 
-  stats.percent_in_target_wafer = total_in_target_wafer / (float) scene_vec.size();
-  stats.avg_links_per_mm2 = total_links / (total_ppus * ppu->area());
-  stats.avg_wafers = wafers / scene_vec.size();
-  stats.avg_coef_per_ppu = total_coef / total_ppus;
-  stats.avg_coef_per_mm2 = total_coef / (total_ppus * ppu->area());
+  ppu_stats.percent_in_target_wafer = total_in_target_wafer / (float) scene_vec.size();
+  ppu_stats.avg_links_per_mm2 = total_links / (total_ppus * ppu->area());
+  ppu_stats.avg_wafers = wafers / scene_vec.size();
+  ppu_stats.avg_coef_per_ppu = total_coef / total_ppus;
+  ppu_stats.avg_coef_per_mm2 = total_coef / (total_ppus * ppu->area());
 }
 
 //path_proc_unit* design_ppu_for_max_capability(drbe_wafer& w, bool dynamic_reconfig,
@@ -786,10 +864,12 @@ void evaluate_ppu(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer&
 
 
 
-path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafer& w,
+path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafer& w, WaferStats & w_stats,
                                          bool dynamic_reconfig) {
 
+  int num_scenario = scene_vec.size();
   PPUStats best_stats;
+  best_stats.ppu_stat_vec = new ppu_stat_per_band[num_scenario];
   path_proc_unit* best_ppu = NULL; //needs to be null so we don't delete a non-pointer
   float chiplet_area = w.chiplet_area();
   tech_params& t = *w._t;
@@ -850,24 +930,25 @@ path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafe
             if(ppu->_num_clusters==0) break;
             //ppu_vec[i].print_area_breakdown();
  
-            PPUStats stats; 
-            evaluate_ppu(ppu,scene_vec,w,stats,1 /*target wafers*/);
+            PPUStats ppu_stats;
+            ppu_stats.ppu_stat_vec = new ppu_stat_per_band[scene_vec.size()];
+            evaluate_ppu(ppu,scene_vec,w, ppu_stats,w_stats,1 /*target wafers*/);
 
             //Optimize the average coefficient per mm2
             //if((stats.percent_in_target_wafer > best_stats.percent_in_target_wafer) 
-            //    && stats.total_failures==0) {
+            //    && ppu_stats.total_failures==0) {
             
-            if(stats.total_failures!=0){
+            if(ppu_stats.total_failures!=0){
               std::cout << "scenario failed\n";
             }
             /*
-            std::cout << "avg_corf: " << stats.avg_coef_per_mm2
+            std::cout << "avg_corf: " << ppu_stats.avg_coef_per_mm2
                       << "best_coef: " << best_stats.avg_coef_per_mm2
-                      << "fail: " << stats.total_failures<< endl;
+                      << "fail: " << ppu_stats.total_failures<< endl;
             */
-            if((stats.avg_coef_per_mm2 > best_stats.avg_coef_per_mm2) && stats.total_failures==0) {
+            if((ppu_stats.avg_coef_per_mm2 > best_stats.avg_coef_per_mm2) && ppu_stats.total_failures==0) {
               path_proc_unit* old_best = best_ppu;
-              best_stats = stats;
+              best_stats = ppu_stats;
               best_ppu=ppu;
               if(old_best) delete old_best;
             } else {
@@ -890,12 +971,13 @@ path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafe
 
 
 
-void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w,
+void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w, WaferStats & w_stats,
                           bool direct_path, bool aidp, bool easy) {
 
     int fixed_platforms = 8;
  
     static const int MAX_WAFERS=21;
+    // #platform, #links, mem_ratio
     std::vector<std::tuple<int,int,float>> metric;
     metric.resize(MAX_WAFERS);
 
@@ -905,19 +987,25 @@ void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w,
       if(num_wafers ==2) {
         w.set_limit_wafer_io(true);
       }
+      w_stats.num_wafer = num_wafers;
+      w_stats.ge_chiplet2support_scenario_percentage = new float[num_wafers * w.num_units()];
 
       for(; fixed_platforms <= 10000; fixed_platforms +=1){
       
         std::vector<Band> scene_vec;
         ScenarioGen::gen_scenarios(scene_vec, direct_path, aidp,1/*num_scene=1*/, 
                                    fixed_platforms, !easy);
-        PPUStats stats;
- 
-        path_proc_unit* new_ppu = design_ppu_for_scenarios(scene_vec,w,false);
-
-
-        evaluate_ppu(new_ppu,scene_vec,w,stats,num_wafers,false /*verbose*/);    
-        if(stats.avg_wafers <= num_wafers) {
+        PPUStats ppu_stats;
+        ppu_stats.ppu_stat_vec = new ppu_stat_per_band[scene_vec.size()];
+        GEStats ge_stats;
+        ge_stats.ge_stat_vec = new ge_stat_per_band[scene_vec.size()];
+        ScenarioGen::set_fidelity(scene_vec, ge_stats, w);
+        // Design PPU and evaluate it
+        path_proc_unit* new_ppu = design_ppu_for_scenarios(scene_vec,w,w_stats, false);
+        evaluate_ppu(new_ppu,scene_vec,w, ppu_stats,w_stats,num_wafers,false /*verbose*/);    
+        // Design GE and evaluate it
+        ge_core* ge = design_ge_core_for_scenario(new_ppu,scene_vec,w,w_stats,ge_stats, ppu_stats);
+        if(ppu_stats.avg_wafers <= num_wafers && w_stats.num_ge_chiplet > 0) {
           //we succeeded, record fixed platforms
         } else {
           metric[num_wafers]=std::make_tuple(scene_vec[0].platforms(),
@@ -939,7 +1027,6 @@ void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w,
    }
    printf("\n");
 }
-
 
 int main(int argc, char* argv[]) {
   bool verbose = false;
@@ -1023,7 +1110,13 @@ int main(int argc, char* argv[]) {
                              num_scenarios, 0, !easy_scenario);
 
 
-  std::ofstream ge_tradeoff = print_ge_tradeoff(dump_file_name);
+  // Print the header for ge_trade
+  std::ofstream ge_tradeoff;
+  if(dump_file_name != "") ge_tradeoff = print_ge_tradeoff(dump_file_name);
+
+  // You can run different experiments by uncommenting different loops here ... we should make this
+  // more configurable in the future. : )
+
   //for(int ppu_area = 20; ppu_area < 21; ppu_area+=5) {
   int ppu_area=20;
   drbe_wafer w(&t,300,(float)ppu_area);
@@ -1038,6 +1131,7 @@ int main(int argc, char* argv[]) {
   //    //b._high_update_period=fast_update_period;
   //    b._frac_clutter = frac_clutter/100.0f;
   //  }
+
 
 
   float start_v = 2;
@@ -1074,20 +1168,26 @@ int main(int argc, char* argv[]) {
     w.set_limit_wafer_io(limit_wafer_io);
     w.set_chiplet_io_layer(chiplet_io_layer);
 
+    // Initialize the recording statistic structure
+    PPUStats ppu_stats;
+    ppu_stats.ppu_stat_vec = new ppu_stat_per_band[num_scenarios];
+    GEStats ge_stats;
+    ge_stats.ge_stat_vec = new ge_stat_per_band[num_scenarios];
+    WaferStats w_stats;
+    w_stats.num_wafer = num_wafers_target;
     // Set GE fidelity
-    ScenarioGen::set_fidelity(scene_vec, w);
+    ScenarioGen::set_fidelity(scene_vec, ge_stats, w);
+    path_proc_unit* best_ppu = design_ppu_for_scenarios(scene_vec,w,w_stats,dynamic_reconfig);
 
-    path_proc_unit* best_ppu = design_ppu_for_scenarios(scene_vec,w,dynamic_reconfig);
-    PPUStats stats;
 
     if(best_ppu == NULL){// if cannot design ppu continue
       continue;
     }
 
-    evaluate_ppu(best_ppu,scene_vec,w,stats,num_wafers_target,verbose /*verbose*/);
+    evaluate_ppu(best_ppu,scene_vec,w, ppu_stats,w_stats,num_wafers_target,verbose /*verbose*/);
 
     if(print_pareto) {
-      top_k_pareto_scenarios(best_ppu,scene_vec,w,6,num_wafers_target);
+      top_k_pareto_scenarios(best_ppu,scene_vec,w,w_stats, 6,num_wafers_target);
     }
 
     printf("v: %0.3f, ", v);
@@ -1113,28 +1213,17 @@ int main(int argc, char* argv[]) {
         best_ppu->_coef_router._out_degree, 
         (int)best_ppu->_mem_ratio, 
         (int)best_ppu->_ppus_per_chiplet,
-        stats.avg_coef_per_mm2,
-        stats.avg_links_per_mm2 * 100,
-        stats.avg_wafers,
-        stats.avg_links_per_mm2 * best_ppu->area(),
-        stats.percent_in_target_wafer*100,
+        ppu_stats.avg_coef_per_mm2,
+        ppu_stats.avg_links_per_mm2 * 100,
+        ppu_stats.avg_wafers,
+        ppu_stats.avg_links_per_mm2 * best_ppu->area(),
+        ppu_stats.percent_in_target_wafer*100,
         num_wafers_target,
-        stats.total_failures);
+        ppu_stats.total_failures);
 
     if(print_wafer_scaling) {
-      print_wafer_tradeoff(*best_ppu, w, direct_path, aidp, easy_scenario);
+      print_wafer_tradeoff(*best_ppu, w, w_stats, direct_path, aidp, easy_scenario);
     }
-
-
-
-    //printf("Wafers Needed Histogram: ");
-    //stats.print_wafer_histo();
-    //printf("\n");
-
-
-    //printf("PPU Wafer Needed (No GE) Histogram: ");
-    //stats.print_wafer_histo();
-    //printf("\n");
 
 
     if(print_hw_config) {
@@ -1155,16 +1244,21 @@ int main(int argc, char* argv[]) {
           );
     }
 
-
-    //  --------------------- Dump GE tradeoff ---------------- 
-    evaluate_ge(scene_vec);
-    dump_ge_tradeoff(ge_tradeoff, scene_vec);
-    if(stats.percent_in_target_wafer*100 < 1){
-      continue;
+    //  --------------------- Find the optimal ratio of GE chiplet ---------------- 
+    ge_core * ge = design_ge_core_for_scenario(best_ppu, scene_vec, w, w_stats, ge_stats, ppu_stats);
+    printf("#wafer = %d, #ge_chiplet = %d, #ppu_chiplet = %d\n", 
+            w_stats.num_wafer, w_stats.num_ge_chiplet, w_stats.num_ppu_chiplet);
+    if(dump_file_name != ""){
+      dump_ge_tradeoff(ge_tradeoff, ge_stats, scene_vec, w_stats);
+      if(ppu_stats.percent_in_target_wafer*100 < 1){
+        continue;
+      }
     }
 
+    
+
   }
-  ge_tradeoff.close();
+  if(dump_file_name != "") ge_tradeoff.close();
 
   return 0;
 }

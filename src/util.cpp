@@ -28,19 +28,18 @@ std::ofstream print_ge_tradeoff(std::string filename){
               << "ratio-obj-tx/rx, "
               // Object by speed
               << "number-fast-obj, number-slow-obj, number-fixed-obj, number-platforms, "
-              // Wafer
-              << "number-wafer, "
-              << "target-wafer, "
-              << "wafer-io-limit, "
-              << "tech-scaling, "
-              // Chiplet
-              << "chiplet-io-layer, "
+              // Wafer Level 
+              << "num_wafer, num_ppu_chiplet, num_ge_chiplet, "
               // Clutter
               << "frac-clutter, "
               // Size
               << "avg-coef-per-obj, "
               // Range
               << "range, "
+              // GE Total Area
+              << "ge-total-area, "
+              << "ge-compute-area, "
+              << "ge-mem-area, "
               // GE fidelity
               << "ta1-upd-rate, "
               << "nr-engine-interpolation_ord, "
@@ -54,7 +53,6 @@ std::ofstream print_ge_tradeoff(std::string filename){
               << "rcs-angle, "
               << "rcs-freq, "
               << "rcs-plzn, "
-              << "rcs-samples, "
               // Coordinate
               << "coor-trans-compute, coor-trans-memory, coor-trans-bandwidth, coor-trans-latency, "
               // NR Engine

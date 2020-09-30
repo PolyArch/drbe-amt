@@ -1,6 +1,6 @@
 #include <limits>
 
-enum instruction {Div_HF, Div, Sqrt, Arctan, Sin, Cos};
+enum instruction {Div_HF, Div, Sqrt, Arctan, Sin, Cos, Cosi};
 enum CorL {Corl_C, Corl_L};
 
 static float ComputeTable(instruction inst, CorL corl){
@@ -46,6 +46,13 @@ static float ComputeTable(instruction inst, CorL corl){
             return 10;
         }else{
             return 5;
+        }
+        break;
+    case Cosi:
+        if(corl == Corl_C){
+            return 20;
+        }else{
+            return 6;
         }
         break;
     default:
