@@ -813,7 +813,10 @@ path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafe
       int bits_per_side=t._chiplet_io_bits_per_mm2*side_length;    
       int total_ins_per_side = (int)(bits_per_side/32.0); //divide by 32 bit width
 
-      int remain=total_ins_per_side - (2*2 + agg_network*2);
+      float ratio_of_input_to_output = (float) OUTPUT_BITWIDTH / (float) INPUT_BITWIDTH;
+
+      // we multiply both of these expressions by 2 because we need both inputs and outputs
+      int remain=total_ins_per_side - (2*2 + agg_network*2*ratio_of_input_to_output);
       if(remain < 2) break;
 
 
@@ -921,7 +924,7 @@ void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w,
      }
    }
 
-   printf("num_wafers num_platforms\n");
+   printf("num_wafers num_platforms num_links, mem_ratio\n");
    for(int num_wafers=1; num_wafers < MAX_WAFERS; ++num_wafers) {
      printf("%8d %8d %8d %8.2f\n", num_wafers, std::get<0>(metric[num_wafers]),
                                             std::get<1>(metric[num_wafers]),
