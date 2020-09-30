@@ -292,7 +292,7 @@ public:
   drbe_wafer(tech_params* t, float diameter, float chiplet_area) : hw_unit(t) {
     _wafer_diameter=diameter;
     _chiplet_area=chiplet_area;
-    set_wafer_tb_per_sec(_io_tb_per_sec);
+    set_io_tb_per_sec(_io_tb_per_sec);
   }
 
   virtual float area() {
@@ -352,12 +352,15 @@ public:
     }
   }
 
+  float io_tb_per_sec() {
+    return _io_tb_per_sec;
+  }
 
-  void set_wafer_tb_per_sec(int v) {
+  void set_io_tb_per_sec(float v) {
     _io_tb_per_sec=v;
 
     // we need to decide i/o distribution
-    int remaining_input_ios = ((float)_io_tb_per_sec) / INPUT_BITWIDTH / _t->ppu_freq() 
+    int remaining_input_ios = (_io_tb_per_sec) / INPUT_BITWIDTH / _t->ppu_freq() 
                              * 1024 * 1024 * 1024 * 1024;
 
     _input_sig_io = min(200,remaining_input_ios/2);
@@ -366,8 +369,8 @@ public:
     int remaining_agg_ios = remaining_input_ios * (float) INPUT_BITWIDTH / (float) OUTPUT_BITWIDTH;
 
     _agg_input_io  = remaining_agg_ios/2;
-    _agg_output_io = remaining_agg_ios/2;
-   
+    _agg_output_io = remaining_agg_ios/2; 
+    printf("input_sig %d, agg_input_io %d\n", _input_sig_io, _agg_input_io);
   }
 
   int input_sig_io()  {return _input_sig_io;}
@@ -381,7 +384,7 @@ private:
   bool _limit_wafer_io=false;
   path_proc_unit* _ppu=0;
 
-  int _io_tb_per_sec=100;
+  float _io_tb_per_sec=100;
   int _input_sig_io=0;
   int _agg_input_io=0;
   int _agg_output_io=0;

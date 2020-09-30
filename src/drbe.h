@@ -134,6 +134,7 @@ class Band {
     } else {
       max_by_agg = w.agg_input_io() / 2; //because we don't know how to get top and bottom
     }
+    //printf("max_by_in %d, max_by_agg %d\n",max_by_in,max_by_agg);
     return std::min(max_by_in,max_by_agg);
   }
 
@@ -154,10 +155,10 @@ class Band {
     float systems_per_wafer = sqrt(links_per_wafer); 
 
     systems_per_wafer = min(systems_per_wafer,max_systems_per_wafer(w));
-
+    
     links_per_wafer = systems_per_wafer * systems_per_wafer;
 
-    return links_per_wafer;
+    return max(links_per_wafer,1.0f);
   }
 
   float ppus_per_band(path_proc_unit& ppu, drbe_wafer& w, int& failures, bool verbose=false) {
