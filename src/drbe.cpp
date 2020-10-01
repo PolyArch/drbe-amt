@@ -561,7 +561,7 @@ float Band::average_clutter(std::vector<Band> scene_vec) {
 }
 
 void get_ge_cmbl(Band & b, ge_stat_per_band & fed_cmbl, drbe_wafer& w){
-  float utilization_fp_macc = 0.1;
+  float utilization_fp_macc = 1;
 
   coordinate_trans_cmbl(fed_cmbl);
   nr_engine_cmbl(fed_cmbl);
@@ -580,7 +580,7 @@ void get_ge_cmbl(Band & b, ge_stat_per_band & fed_cmbl, drbe_wafer& w){
                         fed_cmbl.antenna_gain.compute +
                         fed_cmbl.path_velocity.compute +
                         fed_cmbl.rcs.compute +
-                        fed_cmbl.tu.compute) / fed_cmbl.global_fid.upd_rate / utilization_fp_macc;
+                        fed_cmbl.tu.compute)  / utilization_fp_macc;
   // Total compute density can provide per second
   // Unit is 64-bit MACC / mm2 / second
   float compute_density_per_sec = w._t->ge_comp_density() * w._t->ge_freq();

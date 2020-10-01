@@ -871,15 +871,15 @@ class ScenarioGen {
       ge_stats.ge_stat_vec[i].antenna_gain.order = 4;
       ge_stats.ge_stat_vec[i].antenna_gain.num_antenna = 16;
       ge_stats.ge_stat_vec[i].antenna_gain.res_angle = 2;
-      ge_stats.ge_stat_vec[i].antenna_gain.dict_dim = 800; //CASE: nominal 400 max 800
+      ge_stats.ge_stat_vec[i].antenna_gain.dict_dim = 400; //CASE: nominal 400 max 800
       // RCS
-      ge_stats.ge_stat_vec[i].rcs.order = 6; //CASE: nominal 4 max 6
+      ge_stats.ge_stat_vec[i].rcs.order = 4; //CASE: nominal 4 max 6
       ge_stats.ge_stat_vec[i].rcs.points = 1; //CASE: nominal 20 max 10
       ge_stats.ge_stat_vec[i].rcs.plates = 1;
       ge_stats.ge_stat_vec[i].rcs.pntAngle = 1;
       ge_stats.ge_stat_vec[i].rcs.angle = 1;
       ge_stats.ge_stat_vec[i].rcs.freq = 1;
-      ge_stats.ge_stat_vec[i].rcs.plzn = 4; //CASE: nominal 1 max 4
+      ge_stats.ge_stat_vec[i].rcs.plzn = 1; //CASE: nominal 1 max 4
       i++;
     }
   }
