@@ -12,6 +12,10 @@
 #define OUTPUT_BITWIDTH (64)
 #define COEF_BITWIDTH   (32)
 
+#define REG_OVER_SRAM (4)
+
+#define EXTRA_MEM_BW (1.05)
+
 using namespace std;
 
 class tech_params {
@@ -69,13 +73,13 @@ public:
                            ceil(_out_degree/(float)MaxDegree));
 
     float area=0;
-    area+=(_in_degree/num_networks*4)*(_out_degree/num_networks*4)*_bitwidth*_t->_router_constant;
+    area+=(_in_degree/num_networks*4)*(_out_degree/num_networks*4)*_bitwidth*_t->router_constant();
     area*=num_networks;
 
     // we also need some fifos -- also a weak model
     float delay_fifo_bits = DelayBufferEntries * _bitwidth * _in_degree * 4; //arbitrary constant
     float delay_fifo_Mbits = delay_fifo_bits/1024.0/1024.0;
-    float delay_fifo_area = delay_fifo_Mbits * (1.0/_t->sram_Mb_per_mm2());
+    float delay_fifo_area = delay_fifo_Mbits * (1.0/_t->sram_Mb_per_mm2()) * REG_OVER_SRAM;
     area+=delay_fifo_area;
 
     return area;
@@ -86,6 +90,16 @@ public:
 };
 
 class path_proc_unit;
+
+class distribution_network : public hw_unit {
+  public:
+  distribution_network(tech_params* t, path_proc_unit* p) : hw_unit(t) {
+    ppu = p;
+  }
+  virtual float area();
+  path_proc_unit* ppu;
+};
+
 
 class input_tap_fifo : public hw_unit {
   public:
@@ -110,7 +124,7 @@ class ge_core : public hw_unit{
   ge_core(tech_params * t) : hw_unit(t){
     tech = t;
   }
-  virtual float area(){};
+  virtual float area(){return 0;} //TODO:FIXME -- really?
   // ----------- Area ----------- 
 
   tech_params * tech;
@@ -120,7 +134,7 @@ class path_proc_unit : public hw_unit {
 public:
   path_proc_unit(tech_params* t) : hw_unit(t), 
      _coef_router(t), _input_router(t), _output_router(t),
-      _coef_storage(t,this), _input_tap_fifo(t,this)   {
+      _coef_storage(t,this), _input_tap_fifo(t,this), _dist_network(t,this)   {
     _input_router._in_degree=8;
     _input_router._out_degree=8; // don't really think we need much on input router
     _coef_router._in_degree=8;
@@ -134,7 +148,8 @@ public:
     _coef_router(from._coef_router), _input_router(from._input_router), 
     _output_router(from._output_router),
     _coef_storage(from._coef_storage),
-     _input_tap_fifo(from._input_tap_fifo) {
+    _input_tap_fifo(from._input_tap_fifo),
+    _dist_network(from._dist_network) {
     _input_tap_fifo.ppu=this;
     _coef_storage.ppu=this;
   } 
@@ -178,9 +193,9 @@ public:
     float area_for_path_conv = total_area - area_for_ibuf - router_area();
 
     //Now set the amount of compute that scales with clusters
-    float cluster_area = path_conv_area() + _coef_storage.area();
+    float cluster_area = path_conv_area() + _coef_storage.area() +
+                        _input_tap_fifo.area() + _dist_network.area();
 
-    cluster_area+=_input_tap_fifo.area();
 
     float area_per_cluster = cluster_area / _num_clusters;
 
@@ -237,9 +252,14 @@ public:
     return _coef_router.area() + _input_router.area() + _output_router.area();
   }
 
+  float dist_network_area() {
+    return _dist_network.area();
+  }
+
+
   virtual float area() {
     return path_conv_area() + input_buf_area() + router_area() 
-      + _input_tap_fifo.area() + _coef_storage.area();
+      + _input_tap_fifo.area() + _coef_storage.area() + _dist_network.area();
   }
 
   void print_params() {
@@ -248,17 +268,14 @@ public:
     printf("Input Length: %d\n", _input_buffer_length);
   }
 
-
   void print_area_breakdown() {
-    printf("PPU Area: %f\n", area());
+    //printf("PPU Area: %f\n", area());
     printf("Conv Area: %f\n", path_conv_area());
     printf("Input Buf Area: %f\n", input_buf_area());
     printf("Router Area: %f\n", router_area());
-    printf("Num clusters: %d\n", _num_clusters);
-    printf("Input bitwidth: %d\n", _input_bitwidth);
-
     printf("Input Tap Fifo Area: %f\n", _input_tap_fifo.area());
     printf("Coef. Storage Area: %f\n", _coef_storage.area());
+    printf("Distribution Network Area: %f\n", _dist_network.area());
   }
 
   // we want to avoid div by 0, so lets not return 0
@@ -268,11 +285,16 @@ public:
     return _num_flexible_clusters;
   }
 
+  int fifo_bitwidth () {
+    return ((float)_num_clusters / (float)_mem_banks) * EXTRA_MEM_BW;
+  }
+
   router _coef_router;
   router _input_router;
   router _output_router;
   coef_storage _coef_storage;
   input_tap_fifo _input_tap_fifo;
+  distribution_network _dist_network;
   int _ppus_per_chiplet=1;
   int _num_clusters=140;
   int _num_flexible_clusters=70; // subset of clusters, can be used for clutter
@@ -281,6 +303,9 @@ public:
   int _input_bitwidth=32;
   int _coef_bitwidth=32;
   float _mem_ratio=-1;
+
+  int _compute_banks=4;
+  int _mem_banks=4;
 
   bool _is_dyn_reconfig=false;
 

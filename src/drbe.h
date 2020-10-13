@@ -14,6 +14,8 @@
 #include <sstream>
 #include <tuple>
 
+#define LINK_COMPLEXITY_OVERPROV (1.25f)
+
 struct WaferStats {
   // Wafer level
   int num_wafer = 0; // number of wafers we can provide (this is the input)
@@ -214,75 +216,64 @@ class Band {
       native_frac_clutter=0; //clutter handled by scond loop
     }
 
+    total = 0;
+
     //iterate over combinations of fast and slow ppus
-    for(int speed = 0; speed < 3; ++speed) {
-      for(int clutter = 0; clutter < 2; ++clutter) {
-        float frac_speed = frac_speed_vec[speed];
-        float frac_clutter = clutter==0 ? (1-native_frac_clutter) : native_frac_clutter;
-        float frac= frac_speed * frac_clutter;
-
-        assert(frac_speed >=0 && frac_clutter >=0 && frac >=0);
-        assert(frac_speed <=1 && frac_clutter <=1 && frac <=1);
-        if(frac==0) continue; //save some time : )
-
-        if(verbose) {
-          print_clutter_impact_statement=true;
-          printf("MAPPING WITH PARAMS clutter: %d, speed %d, frac %f\n",clutter,speed, frac);
-        }
-
-        float links_per_ppu = calc_links_per_ppu(ppu,w,_is_direct_path, _is_aidp,                                                                   speed,clutter,false /*just clutter*/,verbose);
-        if(links_per_ppu==0) {
-          failures+=1;
-          continue;
-        }
-
-        if(verbose) printf("\n");
-
-
-        float ppus = ceil(num_links() * frac / links_per_ppu);
-
-        if(clutter && speed !=0) {
-          ppus_affected_by_var_doppler_clutter+=ppus;
-        }
-        //printf("%f %f %f %f; ", frac_speed, frac_clutter,frac,ppus);
-        total_ppus +=ppus;
-      }
-    }
-    //printf(" PPUs\n");
-
-    //Need to pay for FULL tapped delay lines in direct-path models
-    if(_is_direct_path || _is_aidp) {
+    for(int pulsed = 0; pulsed <2; ++ pulsed) {
       for(int speed = 0; speed < 3; ++speed) {
-        float frac_speed = frac_speed_vec[speed];
-        float frac= frac_speed * _frac_clutter;
-        assert(frac_speed >=0 && frac >=0);
-        assert(frac_speed <=1 && frac <=1);
-        if(frac==0) continue; //save some time : )
+        for(int clutter = 0; clutter < 2; ++clutter) {
+          float frac_pulsed = pulsed == 0 ? (1- _frac_pulsed) : _frac_pulsed;
+          float frac_speed = frac_speed_vec[speed];
+          float frac_clutter = clutter==0 ? (1-native_frac_clutter) : native_frac_clutter;
+          float frac= frac_speed * frac_clutter * frac_pulsed;
+  
+          total+=frac;
 
-        if(verbose) {
-          print_clutter_impact_statement=true;
-          printf("Separate TDL MAPPING WITH PARAMS for clutter: speed %d, frac %f\n",speed, frac);
+          assert(frac_speed >=0 && frac_clutter >=0 && frac >=0);
+          assert(frac_speed <=1 && frac_clutter <=1 && frac <=1);
+          if(frac==0) continue; //save some time : )
+ 
+          // For pulsed==0, we want full duty cycle (no pulsed tx)
+          // For pulsed==1, we want pulsed duty cycle
+          float duty_cycle = (pulsed==0) ? 1.0 : _pulsed_duty_cycle;
+
+          if(verbose) {
+            print_clutter_impact_statement=true;
+            printf("MAPPING WITH PARAMS clutter: %d, speed %d, frac %f\n",clutter,speed, frac);
+          }
+  
+          float links_per_ppu = calc_links_per_ppu(ppu,w,_is_direct_path, _is_aidp,                                                                   speed,clutter,false /*just clutter*/,
+                                              duty_cycle, verbose);
+          if(links_per_ppu==0) {
+            failures+=1;
+            continue;
+          }
+  
+          if(verbose) printf("\n");
+  
+          float ppus = ceil(num_links() * frac / links_per_ppu);
+
+
+          //Need to pay for FULL tapped delay lines in direct-path models
+          if(_is_direct_path || _is_aidp) {
+            float clutter_links_per_ppu_for_dp = 
+              calc_links_per_ppu(ppu,w,false,false/*tap-delay*/,
+                                 speed,true/*clutter*/,true/*just clutter*/,
+                                 duty_cycle, verbose);
+            float clutter_ppus_for_dp = ceil(num_links() * frac / clutter_links_per_ppu_for_dp);
+            ppus += clutter_ppus_for_dp;
+          }
+
+          if(clutter && speed !=0) {
+            ppus_affected_by_var_doppler_clutter+=ppus;
+          }
+          //printf("%f %f %f %f; ", frac_speed, frac_clutter,frac,ppus);
+          total_ppus +=ppus;
         }
-
-        float links_per_ppu = calc_links_per_ppu(ppu,w,false,false/*tap-delay*/,
-                                                 speed,true/*clutter*/,true/*just clutter*/,
-                                                 verbose);
-        if(links_per_ppu==0) {
-          failures+=1;
-          continue;
-        }
-
-        if(verbose) printf("\n");
-
-        float ppus = ceil(num_links() * frac / links_per_ppu);
-
-        if(speed !=0) {
-          ppus_affected_by_var_doppler_clutter+=ppus;
-        }
-        //printf("%f %f %f %f; ", frac_speed, frac_clutter,frac,ppus);
-        total_ppus +=ppus;
       }
     }
+
+    assert(total > 0.99f && total < 1.01f);
 
     if(verbose && print_clutter_impact_statement) {
       printf("PPUS: %f, Var Doppler PPUS: %f, var_doppler clutter: %f\n", 
@@ -316,7 +307,7 @@ class Band {
   //fast==0 (fixed), fast==1
   float calc_links_per_ppu(path_proc_unit& ppu, drbe_wafer& wafer, 
                      bool is_direct_path, bool is_aidp,
-                     int speed_txrx, bool clutter, bool just_clutter,
+                     int speed_txrx, bool clutter, bool just_clutter, float tx_duty_cycle,
                      bool verbose = false) {
     if(ppu._num_clusters == 0) {
       return 0;
@@ -327,7 +318,11 @@ class Band {
     assert(!(just_clutter && !clutter));
 
     // First compute degree of multi-system required
-    int total_buffer_needed = 3300000.0 * _range / 500.0;  
+    int total_buffer_needed = 3300000.0 * _range / 500.0;
+
+    if(!_is_aidp && !_is_direct_path) {
+      total_buffer_needed *= tx_duty_cycle; // multiply by duty cycle
+    }
 
     if(is_direct_path || is_aidp) {
       total_buffer_needed /= 2;  //Only need half the range for direct path
@@ -430,6 +425,10 @@ class Band {
     if(!is_direct_path && !is_aidp) {
       //then we can potentially jam multiple links per PPU
 
+      //first, lets reduce the compute intensity by duty cycle
+      full_clusters_per_ppu *= tx_duty_cycle;
+      point_clusters_per_ppu *= tx_duty_cycle;
+      
       for(; num_links_sharing_ppu < ppu._output_router._in_degree; num_links_sharing_ppu++) {
         
         int extra_point_clusters_required = 
@@ -577,7 +576,7 @@ class Band {
     return false;
   }
 
-  bool increase_difficulty(int kind);
+  int increase_difficulty(int kind);
   float normalized_distance_to(Band& other);
   std::vector<float>& normalized_vec();
 
@@ -622,6 +621,8 @@ class Band {
   int _range;
 
   float _frac_clutter = 0.0;
+  float _frac_pulsed = 0.0; // out of 1
+  float _pulsed_duty_cycle = 0.5; //out of 1
   float _low_update_period=1000000; //
   float _high_update_period=10000; //clock cycles?
 
@@ -885,7 +886,9 @@ class ScenarioGen {
     }
   }
 
-  static int overprov_link_complexity() { return 2*max_coef_per_link();} //Arbitrary constant
+  static int overprov_link_complexity() { 
+    return max_coef_per_link() * LINK_COMPLEXITY_OVERPROV;
+  }
 
   //const static int clutter_links=0;
   static int min_platforms() {return 80;}
