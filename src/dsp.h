@@ -1,6 +1,6 @@
 #include <limits>
 
-enum instruction {Div_HF, Div, Sqrt, Arctan, Sin, Cos, Cosi};
+enum instruction {Div_HF, Div, Sqrt, Arctan, Sin, Cos, Cosi, division, mod};
 enum CorL {Corl_C, Corl_L};
 
 static float ComputeTable(instruction inst, CorL corl){
@@ -55,6 +55,10 @@ static float ComputeTable(instruction inst, CorL corl){
             return 6;
         }
         break;
+    case division:
+        return 20;
+    case mod:
+        return 1;
     default:
         return std::numeric_limits<float>::infinity();
         break;

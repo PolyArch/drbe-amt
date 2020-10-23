@@ -9,7 +9,10 @@ enum flags {
   SENSITIVITY_TECH_SCALING,
   SENSITIVITY_WAFER_IO,
   SENSITIVITY_TX_SPARSITY,
-  PARAM_PULSED_TX_DUTY
+  PARAM_PULSED_TX_DUTY,
+  GE_CPU,
+  GE_ASIC,
+  GE_CGRA
 };
 
 static struct option long_options[] = {
@@ -29,6 +32,10 @@ static struct option long_options[] = {
     {"pre-ge-summary",       no_argument,       nullptr, 'p',},
 
     {"pulsed-duty-cycle",    required_argument, nullptr, PARAM_PULSED_TX_DUTY},
+
+    {"ge-cpu",               no_argument,       nullptr, GE_CPU},
+    {"ge-asic",              no_argument,       nullptr, GE_ASIC},
+    {"ge-cgra",              no_argument,       nullptr, GE_CGRA},
 
     {"sense-tech-scaling",   no_argument,       nullptr, SENSITIVITY_TECH_SCALING},
     {"sense-wafer-io",       no_argument,       nullptr, SENSITIVITY_WAFER_IO},
@@ -321,35 +328,35 @@ void antenna_gain_cmbl(Band & b, ge_stat_per_band & fed_cmbl){
         B=B+((4*(no_paths*2))/Tu); //getting each antenna's gains and beamwidths per update time
         L=21;
   }else if(o==4){
-        float angleres=pow(2, (ceil(log2(180/angleres)))); // number of bins
+
+        float no_bins=180/K;
+        float bins_for_ifft=pow(2, ceil(log2(no_bins)));
+
+        C=C+1+ComputeTable(mod, Corl_C/*Not used*/)+2+no_antenna+2+no_antenna+2+no_antenna+no_antenna+2*no_antenna; 
+          // to convert to AWV domain
+
+        C=C+6*no_antenna; // complex point-wise multiplication
+        C=C+6*(no_antenna-1)+(bins_for_ifft/2)*log2(bins_for_ifft)+bins_for_ifft; // to convert to angular
+        C=C+ComputeTable(division, Corl_C/*Not used*/)+(bins_for_ifft+1); // to normalize gain
+        C=C+ComputeTable(division, Corl_C/*Not used*/);
         
-        C=C+no_antenna*(2); //to get second order beam pattern in angular domain
-        C=C+no_antenna+(no_antenna/2)*log2(no_antenna); // to convert to AWV domain
-        C=C+no_antenna; // point-wise multiplication of window function and beam pattern
-        C=C+angleres+(angleres/2)*log2(angleres); // converting it into angular domain wrt number of bins
-        
-        C=2*C; // same calculations for elevation dimension
-        C=C+angleres; // K element wise multiplications of elevation and azimuth dimension
-        C=no_paths*(2*C/Tu); // entire calculation for no of paths per update time.
-    
-        float no_inputs=4;
-        M=M+no_inputs*(no_Tx + no_Rx)+no_antenna; // window precompute and store.
-        B=B+((no_inputs*no_paths*2)+(no_antenna*no_paths*2))/Tu;
-  }else if(o==5 && general == 0){
-        int angleres=pow(2, (ceil(log2(180/angleres)))); // number of bins
-        
-        C=C+no_antenna*(2); //to get second order beam pattern in angular domain
-        C=C+no_antenna+(no_antenna/2)*log2(no_antenna); // to convert to AWV domain
-        C=C+no_antenna; // point-wise multiplication of window function and beam pattern
-        C=C+angleres+(angleres/2)*log2(angleres); // converting it into angular domain wrt number of bins
-        
-        C=2*C; // same calculations for elevation dimension
-        C=C+angleres; // K element wise multiplications of elevation and azimuth dimension
-        C=no_paths*(2*C/Tu); // entire calculation for no of paths per update time.
-    
+        C=2*C; // For elevation dimension
+        C=C+6; // Multiplication of elevation and azimuth gains;
+        C=no_paths*(2*C/Tu);
         int no_inputs=4;
         M=M+no_inputs*(no_Tx + no_Rx)+no_antenna; // window precompute and store.
         B=B+((no_inputs*no_paths*2)+(no_antenna*no_paths*2))/Tu;
+
+  }else if(o==5 && general == 0){
+        int To = 3;
+        float N=floor( pow((180/K)*(90/K), 2) ); // needs to be integer
+        float n=floor((180/K)); // needs to be integer
+        float x=floor(90/K);
+        float y=floor(180/K);
+        M=(no_Tx + no_Rx)*(n*dict_size+2*To*N); //n*dict_size+2*T0*N
+        C=C+2*(((2*x)+(2*x))+2*((2*y)+(2*y))+2*((x)-1)+2*((y)-1)+2*To-1+6); //11 (dependent on To)
+        C=no_paths*(C/Tu);
+        B=B+(To*(no_paths*2)/Tu); //getting To numbers from memory for one path per update time;
   }else if(o==5 && general == 1){
         int N=floor((180/K)* pow((90/K), 2) ); // needs to be integer
         int n=floor((180/K)); // needs to be integer
@@ -566,8 +573,10 @@ float Band::average_clutter(std::vector<Band> scene_vec) {
   return average_clutter;
 }
 
-void get_ge_cmbl(Band & b, ge_stat_per_band & fed_cmbl, drbe_wafer& w){
+void get_ge_cmbl(Band & b, ge_stat_per_band & fed_cmbl, drbe_wafer& w, bool ge_cpu){
+  // All of the calculation per band
   float utilization_fp_macc = 1;
+  if(ge_cpu) utilization_fp_macc = 0.1;
 
   coordinate_trans_cmbl(fed_cmbl);
   nr_engine_cmbl(fed_cmbl);
@@ -601,9 +610,15 @@ void get_ge_cmbl(Band & b, ge_stat_per_band & fed_cmbl, drbe_wafer& w){
                     fed_cmbl.tu.memory;
   float mem_density = w._t->ge_dram_MB() * 1024 * 1024 * 8 / 64;
 
+  // Record the compute and memory requirement
+  fed_cmbl.total_compute = total_compute_per_sec;
+  fed_cmbl.total_memory = total_mem;
+
+  // Record the Compute and Memory Area
   fed_cmbl.compute_area = total_compute_per_sec / compute_density_per_sec;
   fed_cmbl.mem_area = total_mem / mem_density;
 
+  // Record the total area
   fed_cmbl.total_area = fed_cmbl.compute_area + fed_cmbl.mem_area;
 }
 
@@ -644,41 +659,78 @@ void dump_ge_tradeoff(ofstream & ge_tradeoff, GEStats & ge_stats, std::vector<Ba
   }
 }
 
-void evaluate_ge(std::vector<Band>& scene_vec, GEStats & ge_stats, drbe_wafer& w){
+void evaluate_ge(std::vector<Band>& scene_vec, GEStats & ge_stats, drbe_wafer& w, bool ge_cpu){
   int i = 0;
   for(auto & b : scene_vec) {
-    get_ge_cmbl(b, ge_stats.ge_stat_vec[i++], w);
+    get_ge_cmbl(b, ge_stats.ge_stat_vec[i++], w, ge_cpu);
   }
 }
 
 ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& scene_vec, drbe_wafer& w, WaferStats & w_stats, 
-                                      GEStats & ge_stats, PPUStats & ppu_stats) {
+                                      GEStats & ge_stats, PPUStats & ppu_stats, bool ge_cpu, bool ge_asic, bool ge_cgra) {
   ge_core* ge = new ge_core(&*w._t); //needs to be null so we don't delete a non-pointer
 
-  evaluate_ge(scene_vec, ge_stats, w);
+  evaluate_ge(scene_vec, ge_stats, w, ge_cpu);
 
+  // Get the total amount of chiplet per wafer
   float total_chiplets = w.num_units() * w_stats.num_wafer;
   int most_num_scenario_supported = 0;
   int most_scenario_ge_chiplet = 0;
+  int most_scenario_gc_chiplet = 0;
+  int most_scenario_gm_chiplet = 0;
+  // Find: GE chiplet vs. PPU Chiplet
   for(int ge_chiplet = 0; ge_chiplet < w.num_units() * w_stats.num_wafer; ge_chiplet ++){
+    // This is just the area for Geometry Engine, mixing Compute and Memory
     float ge_area = ge_chiplet * 20; // each chiplet is 20 mm2
     float ppu_chiplet = total_chiplets - ge_chiplet;
-    int band_idx = 0;
-    int num_support_scenario = 0;
-    for(auto & b : scene_vec){
-      float current_band_ppu_chiplet = ppu_stats.ppu_stat_vec[band_idx].num_ppu;
-      float current_band_ge_area = ge_stats.ge_stat_vec[band_idx].total_area;
-      if(current_band_ge_area <= ge_area && current_band_ppu_chiplet <= ppu_chiplet) num_support_scenario++;
-      band_idx ++;
-    }
-    if(num_support_scenario > most_num_scenario_supported){
-      most_num_scenario_supported = num_support_scenario;
-      most_scenario_ge_chiplet = ge_chiplet;
-    }
-  }
+
+    // Find: GC chiplet vs. GM chiplet
+    for(int gm_chiplet = 0; gm_chiplet < ge_chiplet; gm_chiplet ++){
+      int gc_chiplet = ge_chiplet - gm_chiplet; // calculate the number of geometry compute chiplet
+      float gc_area = gc_chiplet * 20;// calculate the geometry compute area
+      float gm_area = gm_chiplet * 20;// calculate the geometry memory area
+      // Loop over all scenarios
+      int band_idx = 0;
+      int num_support_scenario = 0;
+      for(auto & b : scene_vec){
+        // Get the PPU area required by this scenario
+        float current_band_ppu_chiplet = ppu_stats.ppu_stat_vec[band_idx].num_ppu;
+        // Get the geometry compute area required by this scenario
+        float current_band_gc_area = ge_stats.ge_stat_vec[band_idx].compute_area;
+        // Get the geometry memory area required by this scenario
+        float current_band_gm_area = ge_stats.ge_stat_vec[band_idx].mem_area;
+        // We first check whether the memory and ppu requirements are met
+        if(current_band_gm_area <= gm_area && /* Geometry Memory Area Satisfied*/
+          current_band_ppu_chiplet <= ppu_chiplet/* PPU Chiplets count Satisfied*/){
+          if(!ge_asic){
+            if(current_band_gc_area <= gc_area){
+              num_support_scenario++;
+            }
+          }else{
+              // ASIC design
+          }
+        }
+
+        band_idx ++;
+      }// End of All scenarios
+      if(num_support_scenario > most_num_scenario_supported){
+        most_num_scenario_supported = num_support_scenario;
+        most_scenario_ge_chiplet = ge_chiplet;
+        most_scenario_gc_chiplet = gc_chiplet;
+        most_scenario_gm_chiplet = gm_chiplet;
+      }
+    }// End of loop over from 0% of GM to 100% of GM (100% GC to 0% GC)
+  }// End of loop over from 0% of GE to 100 % of GE
+
   w_stats.num_ge_chiplet = most_scenario_ge_chiplet;
   w_stats.num_ppu_chiplet = total_chiplets - most_scenario_ge_chiplet;
-
+  w_stats.num_gc_chiplet = most_scenario_gc_chiplet;
+  w_stats.num_gm_chiplet = most_scenario_gm_chiplet;
+  
+  
+  // Assertion
+  assert(w_stats.num_ge_chiplet == (w_stats.num_gc_chiplet + w_stats.num_gm_chiplet) && 
+    "Requirement: num_ge_chiplet == num_gc_chiplet + num_gm_chiplet");
   return ge;
 }
 
@@ -1029,7 +1081,7 @@ void print_performance_summary(float v, int ppu_area, path_proc_unit* best_ppu,
 
 
 void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w, WaferStats & w_stats,
-                          bool direct_path, bool aidp, bool easy) {
+                          bool direct_path, bool aidp, bool easy, bool ge_cpu, bool ge_asic, bool ge_cgra) {
 
     int fixed_platforms = 8;
  
@@ -1060,7 +1112,7 @@ void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w, WaferStats & w_sta
         path_proc_unit* new_ppu = design_ppu_for_scenarios(scene_vec,w,w_stats, false);
         evaluate_ppu(new_ppu,scene_vec,w, ppu_stats,w_stats,num_wafers,false /*verbose*/);    
         // Design GE and evaluate it
-        ge_core* ge = design_ge_core_for_scenario(new_ppu,scene_vec,w,w_stats,ge_stats, ppu_stats);
+        ge_core* ge = design_ge_core_for_scenario(new_ppu,scene_vec,w,w_stats,ge_stats, ppu_stats, ge_cpu, ge_asic, ge_cgra);
         if(ppu_stats.avg_wafers <= num_wafers && w_stats.num_ge_chiplet > 0) {
           //we succeeded, record fixed platforms
         } else {
@@ -1106,6 +1158,10 @@ int main(int argc, char* argv[]) {
   string dump_file_name="";
   tech_params t;
 
+  bool ge_cpu = false;
+  bool ge_cgra= true;
+  bool ge_asic= false;
+
   bool sense=false;
   bool sense_tech_scaling=false;
   bool sense_wafer_io=false;
@@ -1133,6 +1189,10 @@ int main(int argc, char* argv[]) {
       case 'p': print_pre_ge_summary = true; break;
 
       case PARAM_PULSED_TX_DUTY: pulsed_duty_cycle = atof(optarg); break;
+
+      case GE_CPU: {ge_cpu = true;ge_asic = false; ge_cgra = false; break;}
+      case GE_ASIC: {ge_cpu = false;ge_asic = true; ge_cgra = false; break;}
+      case GE_CGRA: {ge_cpu = false;ge_asic = false; ge_cgra = true; break;}
 
       case SENSITIVITY_TECH_SCALING: {sense=true; sense_tech_scaling = true; break;}
       case SENSITIVITY_WAFER_IO:     {sense=true; sense_wafer_io = true; break;}
@@ -1282,7 +1342,7 @@ int main(int argc, char* argv[]) {
     }
 
     if(print_wafer_scaling) {
-      print_wafer_tradeoff(*best_ppu, w, w_stats, direct_path, aidp, easy_scenario);
+      print_wafer_tradeoff(*best_ppu, w, w_stats, direct_path, aidp, easy_scenario, ge_cpu, ge_asic, ge_cgra);
     }
 
 
@@ -1305,7 +1365,7 @@ int main(int argc, char* argv[]) {
     }
 
     //  --------------------- Find the optimal ratio of GE chiplet ---------------- 
-    ge_core * ge = design_ge_core_for_scenario(best_ppu, scene_vec, w, w_stats, ge_stats, ppu_stats);
+    ge_core * ge = design_ge_core_for_scenario(best_ppu, scene_vec, w, w_stats, ge_stats, ppu_stats, ge_cpu, ge_asic, ge_cgra);
 
 
     if(dump_file_name != ""){
@@ -1320,8 +1380,9 @@ int main(int argc, char* argv[]) {
 
     if(!print_pre_ge_summary) {
       print_performance_summary(v, ppu_area, best_ppu, t, scene_vec, ppu_stats, num_wafers_target);
-      printf(", #wafer = %d, #ge_chiplet = %d, #ppu_chiplet = %d\n", 
-              w_stats.num_wafer, w_stats.num_ge_chiplet, w_stats.num_ppu_chiplet);
+      printf(", #wafer = %d, #ge_chiplet = %d (#gc_chiplet = %d, #gm_chiplet = %d), #ppu_chiplet = %d\n", 
+              w_stats.num_wafer, w_stats.num_ge_chiplet, w_stats.num_gc_chiplet, w_stats.num_gm_chiplet,
+              w_stats.num_ppu_chiplet);
     }
 
     if(print_pareto_after_ge) {

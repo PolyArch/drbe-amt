@@ -28,9 +28,10 @@ struct WaferStats {
   int num_ppu_chiplet = 0;
   int num_ge_chiplet = 0;
 
-  // percentage of scenario supported scenatio during finding the GE
-  // GE ratio 0% -> 100%
-  //float * ge_chiplet2support_scenario_percentage;
+  // Geometry Engine Breakdown
+  /*Requirement: num_ge_chiplet == num_gc_chiplet + num_gm_chiplet*/
+  int num_gc_chiplet = 0;
+  int num_gm_chiplet = 0;
 };
 
 // compute, memory, bandwidth, latency
@@ -103,6 +104,10 @@ struct ge_stat_per_band {
   st_path_velocity path_velocity;
   st_rcs rcs;
   st_tu tu;
+  // Total Compute and Total Memory
+  float total_compute = 0.0;
+  float total_memory = 0.0;
+  // Area
   float compute_area = 0.0;
   float mem_area = 0.0;
   float total_area = 0.0;
@@ -169,7 +174,9 @@ class Band {
     //use all over.
     float GE_chiplets_per_wafer = w_stats.num_ge_chiplet / w_stats.num_wafer;
 
-    float num_wafers = wafer_unconstrained_ppus / (w.num_units() * ppu->_ppus_per_chiplet - GE_chiplets_per_wafer);
+    float num_wafers = wafer_unconstrained_ppus / 
+      (w.num_units() * ppu->_ppus_per_chiplet - GE_chiplets_per_wafer);
+      // We substract the number of chiplets that was used to Geometry Engine (Compute + Memory) 
     
     float links_per_wafer = num_links() / num_wafers;
 
@@ -898,7 +905,7 @@ class ScenarioGen {
   static int max_coef_per_link() {return 200;}
 
   static int min_links() {return 6400;}
-  static int max_links() {return 40000;}
+  static int max_links() {return 80000;}
 
   static int min_objects() {return 10;} //threshold (obj/link)
   static int max_objects() {return 100;} //objective
