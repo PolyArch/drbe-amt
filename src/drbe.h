@@ -863,32 +863,32 @@ class ScenarioGen {
   }
 
   // Define the geometry engine fidelity
-  static void set_fidelity(std::vector<Band>& scene_vec, GEStats & ge_stats, drbe_wafer & w){
+  static void set_fidelity(std::vector<Band>& scene_vec, GEStats & ge_stats, drbe_wafer & w, bool ge_hard){
     int i = 0;
     for(auto & b : scene_vec){
       // Global
-      ge_stats.ge_stat_vec[i].global_fid.upd_rate = 5e-6; //CASE: nominal 50e-6 max 5e-6
+      ge_stats.ge_stat_vec[i].global_fid.upd_rate = ge_hard ? 5e-6 : 50e-6; //CASE: nominal 50e-6 max 5e-6
       ge_stats.ge_stat_vec[i].global_fid.num_obj = b._n_obj;
       ge_stats.ge_stat_vec[i].global_fid.num_path = b.num_paths();
       // Coordinate Transformation
       ge_stats.ge_stat_vec[i].coordinate_trans.ta1_scene_upd_rate = 1e-3; 
       // NR Engine
-      ge_stats.ge_stat_vec[i].nr_engine.interpolation_ord = 6; //CASE: nominal 4 max 6
+      ge_stats.ge_stat_vec[i].nr_engine.interpolation_ord = ge_hard ? 6 : 4; //CASE: nominal 4 max 6
       ge_stats.ge_stat_vec[i].nr_engine.conv_fed = 2;
       // Antenna
       ge_stats.ge_stat_vec[i].antenna_gain.order = 5;
       ge_stats.ge_stat_vec[i].antenna_gain.general = 1;
       ge_stats.ge_stat_vec[i].antenna_gain.num_antenna = 16;
       ge_stats.ge_stat_vec[i].antenna_gain.res_angle = 2;
-      ge_stats.ge_stat_vec[i].antenna_gain.dict_dim = 800; //CASE: nominal 400 max 800
+      ge_stats.ge_stat_vec[i].antenna_gain.dict_dim = ge_hard ? 800 : 400; //CASE: nominal 400 max 800
       // RCS
-      ge_stats.ge_stat_vec[i].rcs.order = 6; //CASE: nominal 4 max 6
-      ge_stats.ge_stat_vec[i].rcs.points = 10; //CASE: nominal 20 max 10
+      ge_stats.ge_stat_vec[i].rcs.order = ge_hard ? 6 : 4; //CASE: nominal 4 max 6
+      ge_stats.ge_stat_vec[i].rcs.points = ge_hard ? 10 : 20; //CASE: nominal 20 max 10
       ge_stats.ge_stat_vec[i].rcs.plates = 1;
       ge_stats.ge_stat_vec[i].rcs.pntAngle = 1;
       ge_stats.ge_stat_vec[i].rcs.angle = 2;
       ge_stats.ge_stat_vec[i].rcs.freq = 1;
-      ge_stats.ge_stat_vec[i].rcs.plzn = 2; //CASE: nominal 1 max 4
+      ge_stats.ge_stat_vec[i].rcs.plzn = ge_hard ? 4 : 1; //CASE: nominal 1 max 4
       i++;
     }
   }

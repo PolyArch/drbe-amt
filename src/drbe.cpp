@@ -12,7 +12,8 @@ enum flags {
   PARAM_PULSED_TX_DUTY,
   GE_CPU,
   GE_ASIC,
-  GE_CGRA
+  GE_CGRA,
+  GE_HARD /*Hard Case*/
 };
 
 static struct option long_options[] = {
@@ -36,6 +37,7 @@ static struct option long_options[] = {
     {"ge-cpu",               no_argument,       nullptr, GE_CPU},
     {"ge-asic",              no_argument,       nullptr, GE_ASIC},
     {"ge-cgra",              no_argument,       nullptr, GE_CGRA},
+    {"ge-hard",              no_argument,       nullptr, GE_HARD},
 
     {"sense-tech-scaling",   no_argument,       nullptr, SENSITIVITY_TECH_SCALING},
     {"sense-wafer-io",       no_argument,       nullptr, SENSITIVITY_WAFER_IO},
@@ -679,13 +681,15 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
   int most_scenario_gc_chiplet = 0;
   int most_scenario_gm_chiplet = 0;
   // Find: GE chiplet vs. PPU Chiplet
-  for(int ge_chiplet = 0; ge_chiplet < w.num_units() * w_stats.num_wafer; ge_chiplet ++){
+  for(int ge_chiplet_ratio = 1; ge_chiplet_ratio < 100; ge_chiplet_ratio ++){
+    int ge_chiplet = (float)ge_chiplet_ratio / 100 * total_chiplets;
     // This is just the area for Geometry Engine, mixing Compute and Memory
     float ge_area = ge_chiplet * 20; // each chiplet is 20 mm2
     float ppu_chiplet = total_chiplets - ge_chiplet;
 
     // Find: GC chiplet vs. GM chiplet
-    for(int gm_chiplet = 0; gm_chiplet < ge_chiplet; gm_chiplet ++){
+    for(int gm_chiplet_ratio = 1; gm_chiplet_ratio < 100; gm_chiplet_ratio ++){
+      int gm_chiplet = (float)gm_chiplet_ratio / 100 * ge_chiplet;
       int gc_chiplet = ge_chiplet - gm_chiplet; // calculate the number of geometry compute chiplet
       float gc_area = gc_chiplet * 20;// calculate the geometry compute area
       float gm_area = gm_chiplet * 20;// calculate the geometry memory area
@@ -1081,7 +1085,8 @@ void print_performance_summary(float v, int ppu_area, path_proc_unit* best_ppu,
 
 
 void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w, WaferStats & w_stats,
-                          bool direct_path, bool aidp, bool easy, bool ge_cpu, bool ge_asic, bool ge_cgra) {
+                          bool direct_path, bool aidp, bool easy, 
+                          bool ge_cpu, bool ge_asic, bool ge_cgra, bool ge_hard) {
 
     int fixed_platforms = 8;
  
@@ -1107,12 +1112,14 @@ void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w, WaferStats & w_sta
         ppu_stats.ppu_stat_vec = new ppu_stat_per_band[scene_vec.size()];
         GEStats ge_stats;
         ge_stats.ge_stat_vec = new ge_stat_per_band[scene_vec.size()];
-        ScenarioGen::set_fidelity(scene_vec, ge_stats, w);
+        ScenarioGen::set_fidelity(scene_vec, ge_stats, w, ge_hard);
         // Design PPU and evaluate it
         path_proc_unit* new_ppu = design_ppu_for_scenarios(scene_vec,w,w_stats, false);
-        evaluate_ppu(new_ppu,scene_vec,w, ppu_stats,w_stats,num_wafers,false /*verbose*/);    
+        evaluate_ppu(new_ppu,scene_vec,w, ppu_stats,w_stats,num_wafers,false /*verbose*/);  
+        printf("Finish Design PPU\n");  
         // Design GE and evaluate it
         ge_core* ge = design_ge_core_for_scenario(new_ppu,scene_vec,w,w_stats,ge_stats, ppu_stats, ge_cpu, ge_asic, ge_cgra);
+        printf("Finish Design GE\n");
         if(ppu_stats.avg_wafers <= num_wafers && w_stats.num_ge_chiplet > 0) {
           //we succeeded, record fixed platforms
         } else {
@@ -1124,6 +1131,7 @@ void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w, WaferStats & w_sta
           break;
         }
      }
+     printf("#wafer == %d finished\n", num_wafers);
    }
 
    printf("num_wafers num_platforms num_links, mem_ratio\n");
@@ -1161,6 +1169,7 @@ int main(int argc, char* argv[]) {
   bool ge_cpu = false;
   bool ge_cgra= true;
   bool ge_asic= false;
+  bool ge_hard = false;
 
   bool sense=false;
   bool sense_tech_scaling=false;
@@ -1193,6 +1202,7 @@ int main(int argc, char* argv[]) {
       case GE_CPU: {ge_cpu = true;ge_asic = false; ge_cgra = false; break;}
       case GE_ASIC: {ge_cpu = false;ge_asic = true; ge_cgra = false; break;}
       case GE_CGRA: {ge_cpu = false;ge_asic = false; ge_cgra = true; break;}
+      case GE_HARD: {ge_hard = true; break;}
 
       case SENSITIVITY_TECH_SCALING: {sense=true; sense_tech_scaling = true; break;}
       case SENSITIVITY_WAFER_IO:     {sense=true; sense_wafer_io = true; break;}
@@ -1322,7 +1332,7 @@ int main(int argc, char* argv[]) {
     WaferStats w_stats;
     w_stats.num_wafer = num_wafers_target;
     // Set GE fidelity
-    ScenarioGen::set_fidelity(scene_vec, ge_stats, w);
+    ScenarioGen::set_fidelity(scene_vec, ge_stats, w, ge_hard);
     path_proc_unit* best_ppu = design_ppu_for_scenarios(scene_vec,w,w_stats,dynamic_reconfig);
 
 
@@ -1342,7 +1352,8 @@ int main(int argc, char* argv[]) {
     }
 
     if(print_wafer_scaling) {
-      print_wafer_tradeoff(*best_ppu, w, w_stats, direct_path, aidp, easy_scenario, ge_cpu, ge_asic, ge_cgra);
+      print_wafer_tradeoff(*best_ppu, w, w_stats, direct_path, aidp, easy_scenario, 
+      ge_cpu, ge_asic, ge_cgra, ge_hard);
     }
 
 
