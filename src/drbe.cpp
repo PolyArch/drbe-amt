@@ -1116,10 +1116,8 @@ void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w, WaferStats & w_sta
         // Design PPU and evaluate it
         path_proc_unit* new_ppu = design_ppu_for_scenarios(scene_vec,w,w_stats, false);
         evaluate_ppu(new_ppu,scene_vec,w, ppu_stats,w_stats,num_wafers,false /*verbose*/);  
-        printf("Finish Design PPU\n");  
         // Design GE and evaluate it
         ge_core* ge = design_ge_core_for_scenario(new_ppu,scene_vec,w,w_stats,ge_stats, ppu_stats, ge_cpu, ge_asic, ge_cgra);
-        printf("Finish Design GE\n");
         if(ppu_stats.avg_wafers <= num_wafers && w_stats.num_ge_chiplet > 0) {
           //we succeeded, record fixed platforms
         } else {
@@ -1131,7 +1129,6 @@ void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w, WaferStats & w_sta
           break;
         }
      }
-     printf("#wafer == %d finished\n", num_wafers);
    }
 
    printf("num_wafers num_platforms num_links, mem_ratio\n");
