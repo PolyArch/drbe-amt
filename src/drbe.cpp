@@ -1096,7 +1096,7 @@ void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w, WaferStats & w_sta
         path_proc_unit* new_ppu = design_ppu_for_scenarios(scene_vec,w,w_stats, false);
         evaluate_ppu(new_ppu,scene_vec,w, ppu_stats,w_stats,num_wafers,false /*verbose*/);  
        
-        if(!pre_ge) { 
+        if(pre_ge) { 
           // Design GE and evaluate it
           ge_core* ge = design_ge_core_for_scenario(new_ppu,scene_vec,w,w_stats,ge_stats, ppu_stats, ge_cpu, ge_asic, ge_cgra);
 
@@ -1105,7 +1105,7 @@ void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w, WaferStats & w_sta
           evaluate_ppu(new_ppu,scene_vec,w, ppu_stats,w_stats,num_wafers,false /*verbose*/);  
         }
         
-        if(ppu_stats.avg_wafers <= num_wafers && w_stats.num_ge_chiplet > 0) {
+        if(ppu_stats.avg_wafers <= num_wafers && (w_stats.num_ge_chiplet > 0 || pre_ge)) {
           //we succeeded, record fixed platforms
         } else {
           metric[num_wafers]=std::make_tuple(scene_vec[0].platforms(),
