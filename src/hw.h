@@ -119,16 +119,7 @@ class coef_storage : public hw_unit {
   path_proc_unit* ppu;
 };
 
-class ge_core : public hw_unit{
-  public:
-  ge_core(tech_params * t) : hw_unit(t){
-    tech = t;
-  }
-  virtual float area(){return 0;} //TODO:FIXME -- really?
-  // ----------- Area ----------- 
 
-  tech_params * tech;
-};
 
 class path_proc_unit : public hw_unit {
 public:
@@ -416,3 +407,33 @@ private:
 
 };
 
+class ge_core : public hw_unit{
+  public:
+  ge_core(tech_params * t) : hw_unit(t){
+    tech = t;
+  }
+  
+  // ----------- Compute AREA ----------- 
+  // This is dedicated to ASIC design
+  float coord_trans_compute_area = 0.0;
+  float nr_engine_compute_area = 0.0;
+  float relative_orient_compute_area = 0.0;
+  float antenna_compute_area = 0.0;
+  float path_gain_compute_area = 0.0;
+  float rcs_compute_area = 0.0;
+  float tu_compute_area = 0.0;
+
+  // ----------- Memory AREA ----------- 
+  // This is dedicated to ASIC design
+  float coord_trans_memory_area = 0.0;
+  float nr_engine_memory_area = 0.0;
+  float relative_orient_memory_area = 0.0;
+  float antenna_memory_area = 0.0;
+  float path_gain_memory_area = 0.0;
+  float rcs_memory_area = 0.0;
+  float tu_memory_area = 0.0;
+
+  virtual float area(){return 0;} //TODO:FIXME -- really?
+
+  tech_params * tech;
+};

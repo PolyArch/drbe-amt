@@ -641,12 +641,90 @@ void evaluate_ge(std::vector<Band>& scene_vec, GEStats & ge_stats, drbe_wafer& w
   }
 }
 
+void print_ge_breakdown(ge_core & ge){
+  printf(" ------ ASIC Compute Area ------\n");
+  printf("\
+          coord_trans = %.6f um2\n \
+          NR engine = %.2f um2\n \
+          relative orientation = %.6f um2\n \
+          antenna = %.2f um2\n \
+          path gain = %.2f um2\n \
+          RCS = %.2f um2\n \
+          Tu = %.2f um2\n",
+          ge.coord_trans_compute_area,
+          ge.nr_engine_compute_area,
+          ge.relative_orient_compute_area,
+          ge.antenna_compute_area,
+          ge.path_gain_compute_area,
+          ge.rcs_compute_area,
+          ge.tu_compute_area);
+  printf(" ------ ASIC Memory Area ------\n");
+    printf("\
+          coord_trans = %.6f um2\n \
+          NR engine = %.2f um2\n \
+          relative orientation = %.6f um2\n \
+          antenna = %.2f um2\n \
+          path gain = %.2f um2\n \
+          RCS = %.2f um2\n \
+          Tu = %.2f um2\n",
+          ge.coord_trans_memory_area,
+          ge.nr_engine_memory_area,
+          ge.relative_orient_memory_area,
+          ge.antenna_memory_area,
+          ge.path_gain_memory_area,
+          ge.rcs_memory_area,
+          ge.tu_memory_area);
+}
+
+int get_num_supported_scenario(
+    ge_core & ge, 
+    drbe_wafer& w, 
+    int num_scenarios,
+    int num_ppu_chiplet,
+    GEStats & ge_stats,
+    PPUStats & ppu_stats){
+      float compute_density_per_sec = w._t->ge_comp_density() * w._t->ge_freq();
+      float mem_density = w._t->ge_dram_MB() * 1024 * 1024 * 8 / 64;
+      int num_supported_scenario = 0;
+      for(int band_idx = 0; band_idx < num_scenarios;band_idx ++){
+        // memory and compute resource need satisfied
+        bool can_support_this =
+        /* PPU */ 
+            ppu_stats.ppu_stat_vec[band_idx].num_ppu <= num_ppu_chiplet
+        /* GE Compute */ 
+        &&  ge_stats.ge_stat_vec[band_idx].coordinate_trans.compute / compute_density_per_sec <= ge.coord_trans_compute_area
+        &&  ge_stats.ge_stat_vec[band_idx].nr_engine.compute / compute_density_per_sec <= ge.nr_engine_compute_area
+        &&  ge_stats.ge_stat_vec[band_idx].relative_orientation.compute / compute_density_per_sec <= ge.relative_orient_compute_area
+        &&  ge_stats.ge_stat_vec[band_idx].antenna_gain.compute / compute_density_per_sec <= ge.antenna_compute_area
+        &&  ge_stats.ge_stat_vec[band_idx].path_velocity.compute / compute_density_per_sec <= ge.path_gain_compute_area
+        &&  ge_stats.ge_stat_vec[band_idx].rcs.compute / compute_density_per_sec <= ge.rcs_compute_area
+        &&  ge_stats.ge_stat_vec[band_idx].tu.compute / compute_density_per_sec <= ge.tu_compute_area
+        /* GE Memory */
+        &&  ge_stats.ge_stat_vec[band_idx].coordinate_trans.memory / mem_density <= ge.coord_trans_memory_area
+        &&  ge_stats.ge_stat_vec[band_idx].nr_engine.memory / mem_density <= ge.nr_engine_memory_area
+        &&  ge_stats.ge_stat_vec[band_idx].relative_orientation.memory / mem_density <= ge.relative_orient_memory_area
+        &&  ge_stats.ge_stat_vec[band_idx].antenna_gain.memory / mem_density <= ge.antenna_memory_area
+        &&  ge_stats.ge_stat_vec[band_idx].path_velocity.memory / mem_density <= ge.path_gain_memory_area
+        &&  ge_stats.ge_stat_vec[band_idx].rcs.memory / mem_density <= ge.rcs_memory_area
+        &&  ge_stats.ge_stat_vec[band_idx].tu.memory / mem_density <= ge.tu_memory_area;
+
+        if(can_support_this){
+          num_supported_scenario ++;
+        }
+      }
+      return num_supported_scenario;
+  }
+
 ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& scene_vec, drbe_wafer& w, WaferStats & w_stats, 
                                       GEStats & ge_stats, PPUStats & ppu_stats, bool ge_cpu, bool ge_asic, bool ge_cgra) {
   ge_core* ge = new ge_core(&*w._t); //needs to be null so we don't delete a non-pointer
 
+  // This function calculate the compute/memory/latency/bandwidth required by each block
   evaluate_ge(scene_vec, ge_stats, w, ge_cpu);
 
+  /*
+  We use all scenarios to find the optimal point of CPU/CGRA
+  */    
   // Get the total amount of chiplet per wafer
   float total_chiplets = w.num_units() * w_stats.num_wafer;
   int most_num_scenario_supported = 0;
@@ -654,14 +732,13 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
   int most_scenario_gc_chiplet = 0;
   int most_scenario_gm_chiplet = 0;
   // Find: GE chiplet vs. PPU Chiplet
-  for(int ge_chiplet_ratio = 1; ge_chiplet_ratio < 100; ge_chiplet_ratio ++){
+  for(float ge_chiplet_ratio = 0.5; ge_chiplet_ratio < 100; ge_chiplet_ratio += 0.5 ){
     int ge_chiplet = (float)ge_chiplet_ratio / 100 * total_chiplets;
     // This is just the area for Geometry Engine, mixing Compute and Memory
-    float ge_area = ge_chiplet * 20; // each chiplet is 20 mm2
     float ppu_chiplet = total_chiplets - ge_chiplet;
 
     // Find: GC chiplet vs. GM chiplet
-    for(int gm_chiplet_ratio = 1; gm_chiplet_ratio < 100; gm_chiplet_ratio ++){
+    for(float gm_chiplet_ratio = 0.5; gm_chiplet_ratio < 100; gm_chiplet_ratio += 0.5){
       int gm_chiplet = (float)gm_chiplet_ratio / 100 * ge_chiplet;
       int gc_chiplet = ge_chiplet - gm_chiplet; // calculate the number of geometry compute chiplet
       float gc_area = gc_chiplet * 20;// calculate the geometry compute area
@@ -683,15 +760,10 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
         // We first check whether the memory and ppu requirements are met
         if(current_band_gm_area <= gm_area && /* Geometry Memory Area Satisfied*/
           current_band_ppu_chiplet <= ppu_chiplet/* PPU Chiplets count Satisfied*/){
-          if(!ge_asic){
             if(current_band_gc_area <= gc_area){
               num_support_scenario++;
             }
-          }else{
-              // ASIC design place holder
-          }
         }
-
         band_idx ++;
       }// End of All scenarios
       if(num_support_scenario > most_num_scenario_supported){
@@ -702,11 +774,103 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
       }
     }// End of loop over from 0% of GM to 100% of GM (100% GC to 0% GC)
   }// End of loop over from 0% of GE to 100 % of GE
+  // debug
+  printf("%d out of %d scenarios (%.2f %) are support by CGRA/CPU design\n", 
+    most_num_scenario_supported, scene_vec.size(), 100 * (float)most_num_scenario_supported / (float)scene_vec.size() );
 
   w_stats.num_ge_chiplet = most_scenario_ge_chiplet;
   w_stats.num_ppu_chiplet = total_chiplets - most_scenario_ge_chiplet;
   w_stats.num_gc_chiplet = most_scenario_gc_chiplet;
   w_stats.num_gm_chiplet = most_scenario_gm_chiplet;
+  /*
+  If we are using ASIC, then we use the average of all scenarios as start point,
+  the point of doing ASIC design, is that we want to see how it perform compared against CGRA
+  */
+  float compute_density_per_sec = w._t->ge_comp_density() * w._t->ge_freq();
+  float mem_density = w._t->ge_dram_MB() * 1024 * 1024 * 8 / 64;
+  if(ge_asic){
+    // In order to make the comparison fair, we use the same amout of GE chiplet
+    int num_asic_ge_chiplet = w_stats.num_ge_chiplet;
+    // Let us use the average Compute and Memory to distribute the ASIC
+    // Calculate the average compute/memory area across all scenarios
+    float all_scenario_compute_area = 0.0; 
+    float all_scenario_memory_area = 0.0;
+    // Compute Area breakdown of all scenarios
+    float all_scenario_coord_trans_compute_area = 0.0;
+    float all_scenario_nr_engine_compute_area = 0.0;
+    float all_scenario_relative_orient_compute_area = 0.0;
+    float all_scenario_antenna_compute_area = 0.0;
+    float all_scenario_path_gain_compute_area = 0.0;
+    float all_scenario_rcs_compute_area = 0.0;
+    float all_scenario_tu_compute_area = 0.0;
+    // memory Area breakdown of all scenarios
+    float all_scenario_coord_trans_memory_area = 0.0;
+    float all_scenario_nr_engine_memory_area = 0.0;
+    float all_scenario_relative_orient_memory_area = 0.0;
+    float all_scenario_antenna_memory_area = 0.0;
+    float all_scenario_path_gain_memory_area = 0.0;
+    float all_scenario_rcs_memory_area = 0.0;
+    float all_scenario_tu_memory_area = 0.0;
+    // Start gathering the statistics
+    int band_idx = 0;
+    for(auto & b : scene_vec){
+      // Overall statistic
+      all_scenario_memory_area += ge_stats.ge_stat_vec[band_idx].mem_area;
+      all_scenario_compute_area += ge_stats.ge_stat_vec[band_idx].compute_area;
+      // Compute
+      all_scenario_coord_trans_compute_area += ge_stats.ge_stat_vec[band_idx].coordinate_trans.compute / compute_density_per_sec;
+      all_scenario_nr_engine_compute_area += ge_stats.ge_stat_vec[band_idx].nr_engine.compute / compute_density_per_sec;
+      all_scenario_relative_orient_compute_area += ge_stats.ge_stat_vec[band_idx].relative_orientation.compute / compute_density_per_sec;
+      all_scenario_antenna_compute_area += ge_stats.ge_stat_vec[band_idx].antenna_gain.compute / compute_density_per_sec;
+      all_scenario_path_gain_compute_area += ge_stats.ge_stat_vec[band_idx].path_velocity.compute / compute_density_per_sec;
+      all_scenario_rcs_compute_area += ge_stats.ge_stat_vec[band_idx].rcs.compute / compute_density_per_sec;
+      all_scenario_tu_compute_area += ge_stats.ge_stat_vec[band_idx].tu.compute / compute_density_per_sec;
+      // Memory
+      all_scenario_coord_trans_memory_area += ge_stats.ge_stat_vec[band_idx].coordinate_trans.memory / mem_density;
+      all_scenario_nr_engine_memory_area += ge_stats.ge_stat_vec[band_idx].nr_engine.memory / mem_density;
+      all_scenario_relative_orient_memory_area += ge_stats.ge_stat_vec[band_idx].relative_orientation.memory / mem_density;
+      all_scenario_antenna_memory_area += ge_stats.ge_stat_vec[band_idx].antenna_gain.memory / mem_density;
+      all_scenario_path_gain_memory_area += ge_stats.ge_stat_vec[band_idx].path_velocity.memory / mem_density;
+      all_scenario_rcs_memory_area += ge_stats.ge_stat_vec[band_idx].rcs.memory / mem_density;
+      all_scenario_tu_memory_area += ge_stats.ge_stat_vec[band_idx].tu.memory / mem_density;
+      band_idx ++;
+    }
+    float average_memory_area = all_scenario_memory_area / (float) band_idx;
+    float average_compute_area = all_scenario_compute_area / (float) band_idx;
+    float average_total_area = average_memory_area + average_compute_area;
+    // Calculate the initial number of GC/GM chiplet
+    int num_asic_gc_chiplet = ceil((float)num_asic_ge_chiplet * 
+      (average_compute_area / average_total_area));
+    float gc_chiplet_area = num_asic_gc_chiplet * 20;// each chiplet is 20 um2
+    int num_asic_gm_chiplet = floor((float)num_asic_ge_chiplet * 
+      (average_memory_area / average_total_area));
+    float gm_chiplet_area = num_asic_gm_chiplet * 20;// each chiplet is 20 um2
+    // Calculate the initial breakdown of each block (using the average breakdown)
+    ge->coord_trans_compute_area = gc_chiplet_area * all_scenario_coord_trans_compute_area / all_scenario_compute_area;
+    ge->nr_engine_compute_area = gc_chiplet_area * all_scenario_nr_engine_compute_area / all_scenario_compute_area;
+    ge->relative_orient_compute_area = gc_chiplet_area * all_scenario_relative_orient_compute_area / all_scenario_compute_area;
+    ge->antenna_compute_area = gc_chiplet_area * all_scenario_antenna_compute_area / all_scenario_compute_area;
+    ge->path_gain_compute_area = gc_chiplet_area * all_scenario_path_gain_compute_area / all_scenario_compute_area;
+    ge->rcs_compute_area = gc_chiplet_area * all_scenario_rcs_compute_area / all_scenario_compute_area;
+    ge->tu_compute_area = gc_chiplet_area * all_scenario_tu_compute_area / all_scenario_compute_area;
+    // Calculate the initial breakdown of each block (using the average breakdown)
+    ge->coord_trans_memory_area = gm_chiplet_area * all_scenario_coord_trans_memory_area / all_scenario_memory_area;
+    ge->nr_engine_memory_area = gm_chiplet_area * all_scenario_nr_engine_memory_area / all_scenario_memory_area;
+    ge->relative_orient_memory_area = gm_chiplet_area * all_scenario_relative_orient_memory_area / all_scenario_memory_area;
+    ge->antenna_memory_area = gm_chiplet_area * all_scenario_antenna_memory_area / all_scenario_memory_area;
+    ge->path_gain_memory_area = gm_chiplet_area * all_scenario_path_gain_memory_area / all_scenario_memory_area;
+    ge->rcs_memory_area = gm_chiplet_area * all_scenario_rcs_memory_area / all_scenario_memory_area;
+    ge->tu_memory_area = gm_chiplet_area * all_scenario_tu_memory_area / all_scenario_memory_area;
+    /*
+    Exploration Start
+    */
+    int initial_num_supported = get_num_supported_scenario(*ge, w, scene_vec.size(),w_stats.num_ppu_chiplet , ge_stats, ppu_stats);
+    print_ge_breakdown(*ge);
+    printf("%d out of %d scenarios (%.2f %) are supportted by ASIC design\n", 
+    initial_num_supported, scene_vec.size(), 100 * (float)initial_num_supported / (float)scene_vec.size() );
+
+  }
+
   
   
   // Assertion

@@ -41,4 +41,3 @@ float coef_storage::area() {
   float area = Mbits * (1.0/_t->sram_Mb_per_mm2()) * REG_OVER_SRAM;
   return area;
 }
-
