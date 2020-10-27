@@ -1049,7 +1049,7 @@ class ScenarioGen {
       ge_stats.ge_stat_vec[i].rcs.pntAngle = 1;
       ge_stats.ge_stat_vec[i].rcs.angle = 4;
       ge_stats.ge_stat_vec[i].rcs.freq = 1;
-      ge_stats.ge_stat_vec[i].rcs.plzn = ge_hard ? 4 : 1; //CASE: nominal 1 max 4
+      ge_stats.ge_stat_vec[i].rcs.plzn = ge_hard ? 2 : 1; //CASE: nominal 1 max 4
       i++;
     }
   }
