@@ -113,6 +113,76 @@ struct ge_stat_per_band {
   float total_area = 0.0;
 };
 
+// This structure records the number of "MACCS" in
+struct DatapathOverheads {
+  typedef enum  {
+    MAX=0, //actual computaiton
+    FAST_OBJ,
+    POINT_FULL_RATIO,
+    CLUTTER,
+    IMPERFECT_MAP,
+    COEF_NETWORK,
+    NUM_ENTRIES 
+  } OVERHEAD_REASON;
+
+  static const char* nameof(int i) {
+    switch(i) {
+      case MAX: return "max";
+      case FAST_OBJ: return "fast";
+      case POINT_FULL_RATIO: return "p/f";
+      case CLUTTER: return "clut";
+      case IMPERFECT_MAP: return "map";
+      case COEF_NETWORK: return "net";
+      default: return "util";
+    }
+  }
+
+  void scan() {
+    for(int i = 0; i < NUM_ENTRIES-1; ++i) {
+      reason[i] = reason[i]-reason[i+1];
+    }
+    
+  }
+
+  void add_ov(DatapathOverheads& other, float ratio) {
+    for(int i = 0; i < NUM_ENTRIES; ++i) {
+      reason[i] += ratio * other.reason[i];
+    }
+  }
+
+  float reason[NUM_ENTRIES] = {0};
+};
+
+struct ppu_stat_per_band {
+  float num_ppu = 0.0;
+  float num_ppu_chiplet = 0.0;
+};
+
+
+struct PPUStats {
+  float avg_coef_per_ppu=0;
+  float avg_coef_per_mm2=0;
+  int total_failures=0;
+  float avg_wafers=0;
+  float avg_links_per_wafer=0;
+  float percent_in_target_wafer=0;
+
+  float avg_links_per_mm2=0;
+
+  // Histogram
+  int wafer_histo[100000];
+  void print_wafer_histo() {
+    for(int i = 1; i < 400; ++i) {
+      printf("%d ",wafer_histo[i]);
+    }
+  }
+
+  float num_scenarios=0;
+  DatapathOverheads overhead;
+
+  // Per Band Statistic
+  ppu_stat_per_band * ppu_stat_vec;
+};
 
 
 
@@ -168,6 +238,7 @@ class Band {
   }
 
 
+ 
   float calc_links_per_wafer(float wafer_unconstrained_ppus, path_proc_unit* ppu, drbe_wafer& w, WaferStats & w_stats, bool verbose = false) {
 
     //We're goint to just cut the biggest square we can out, and assume that's what we'll
@@ -193,13 +264,15 @@ class Band {
     return max(links_per_wafer,1.0f);
   }
 
-  float ppus_per_band(path_proc_unit& ppu, drbe_wafer& w, int& failures, bool verbose=false) {
+  float ppus_per_band(path_proc_unit& ppu, drbe_wafer& w, PPUStats& ppu_stats, bool verbose=false) {
     // Table for reasoning about number of slow/fast tx/rx pairs
     //          tx:   Fixed       Slow       Fast
     //                -----------------------------
     //  rx:    Fixed | fixed      slow      fast
     //         Slow  | slow       slow      fast
     //         Fast  | fast       fast      fast
+
+    ppu_stats.num_scenarios++;
 
     float frac_fixed = (float)(_n_fixed)/((float)platforms());
     float frac_slow  = (float)(_n_slow) /((float)platforms());
@@ -249,10 +322,16 @@ class Band {
             printf("MAPPING WITH PARAMS clutter: %d, speed %d, frac %f\n",clutter,speed, frac);
           }
   
-          float links_per_ppu = calc_links_per_ppu(ppu,w,_is_direct_path, _is_aidp,                                                                   speed,clutter,false /*just clutter*/,
+          DatapathOverheads ov;
+          float links_per_ppu = calc_links_per_ppu(ppu,ov,w,_is_direct_path, _is_aidp,                                                                   speed,clutter,false /*just clutter*/,
                                               duty_cycle, verbose);
+          
+          ppu_stats.overhead.add_ov(ov,frac); //accumulate total overhead statistics
+
+
+
           if(links_per_ppu==0) {
-            failures+=1;
+            ppu_stats.total_failures+=1;
             continue;
           }
   
@@ -263,10 +342,14 @@ class Band {
 
           //Need to pay for FULL tapped delay lines in direct-path models
           if(_is_direct_path || _is_aidp) {
+
             float clutter_links_per_ppu_for_dp = 
-              calc_links_per_ppu(ppu,w,false,false/*tap-delay*/,
+              calc_links_per_ppu(ppu,ov,w,false,false/*tap-delay*/,
                                  speed,true/*clutter*/,true/*just clutter*/,
                                  duty_cycle, verbose);
+  
+            ppu_stats.overhead.add_ov(ov,frac); //accumulate total overhead statistics
+
             float clutter_ppus_for_dp = ceil(num_links() * frac / clutter_links_per_ppu_for_dp);
             ppus += clutter_ppus_for_dp;
           }
@@ -279,6 +362,8 @@ class Band {
         }
       }
     }
+
+    ppu_stats.overhead.scan(); // 
 
     assert(total > 0.99f && total < 1.01f);
 
@@ -312,7 +397,7 @@ class Band {
   }
 
   //fast==0 (fixed), fast==1
-  float calc_links_per_ppu(path_proc_unit& ppu, drbe_wafer& wafer, 
+  float calc_links_per_ppu(path_proc_unit& ppu, DatapathOverheads& ov, drbe_wafer& wafer, 
                      bool is_direct_path, bool is_aidp,
                      int speed_txrx, bool clutter, bool just_clutter, float tx_duty_cycle,
                      bool verbose = false) {
@@ -320,6 +405,7 @@ class Band {
       return 0;
     }
 
+ 
     // Can't have clutter and direct path or scatter seperable
     assert(!(clutter && (is_direct_path || is_aidp)));
     assert(!(just_clutter && !clutter));
@@ -346,6 +432,17 @@ class Band {
       printf("ppus_in_full_range: %d, mem_ratio %f\n",ppus_in_full_range,ppu._mem_ratio);
     }
 
+    //Calculate the number of MACCs/PPU (ideal case)
+    ov.reason[DatapathOverheads::MAX] = ppu.num_full_clusters() * ppu._coef_per_cluster +
+                                           ppu.num_point_clusters();
+
+
+    // This is used for overhead calculation;
+    int ideal_coef_per_ppu_per_link = -1;  //need to set this...
+
+
+    float extra_obj_ratio_for_fast = 0;
+    
     int objects_per_ppu;
     if(is_direct_path) {
       // also need to expand ppus_in_full_range due to i/o limitations
@@ -356,6 +453,7 @@ class Band {
       //objects are split up among these ppus
       objects_per_ppu = ceil(_n_obj/(float)ppus_in_full_range);
     } else if(is_aidp) {
+
       // Similar constraint here due to _k_rcs_points to aggregate
       int io_ppus_per_side = ceil(_k_rcs_points / (float)ppu._output_router._in_degree);
       ppus_in_full_range = max(ppus_in_full_range, io_ppus_per_side * io_ppus_per_side);
@@ -363,24 +461,37 @@ class Band {
       // FOR ojects/ppu, THIS IS A BIT OF A WEIRD MODEL, 
       // SINCE COMPUTATION DOES NOT HAPPEN IN TERMS OF OBJECTS
       //instead, we will convert to effective number of object
-      float coef_required = _k_rcs_points * _coef_per_rcs_point;
+      float coef_required = _k_rcs_points * _coef_per_rcs_point * 2;
       //compute the equivalent objects:
       objects_per_ppu = ceil(coef_required/_avg_coef_per_object);
+
+      ov.reason[DatapathOverheads::MAX] = coef_required;
 
       // this will get multiplied out correctly later
       // Note also taht we don't both to split these up among ppus since we expect the
       // total clusters to be low anyways
 
     } else { // Tapped delay case
-      if(ppu._is_dyn_reconfig) {
-       objects_per_ppu = 
+      float ideal_objects_per_ppu = 
         ceil( (_n_obj)/(float)ppus_in_full_range);
+      
+      // compute this PURELY for computing overheads
+      ideal_coef_per_ppu_per_link = ideal_objects_per_ppu * _avg_frac_full_objects * 
+                                    _avg_coef_per_object +
+                                    ideal_objects_per_ppu * (1-_avg_frac_full_objects);
+
+      if(ppu._is_dyn_reconfig) {
+        objects_per_ppu= ideal_objects_per_ppu;  
       } else {
-       objects_per_ppu = 
-        ceil( (_n_obj - _n_full_range_obj)/(float)ppus_in_full_range) +
-        _n_full_range_obj;
+        objects_per_ppu = 
+          ceil( (_n_obj - _n_full_range_obj)/(float)ppus_in_full_range) +
+          _n_full_range_obj;
+        extra_obj_ratio_for_fast = ideal_objects_per_ppu / objects_per_ppu;
       }
     } 
+
+    ov.reason[DatapathOverheads::FAST_OBJ] = ov.reason[DatapathOverheads::MAX] * 
+                                                extra_obj_ratio_for_fast;
 
     int full_clusters_per_ppu = 0;
     int point_clusters_per_ppu = 0;
@@ -396,10 +507,50 @@ class Band {
        full_clusters_per_ppu += full_obj * clusters_per_full_object; 
        point_clusters_per_ppu += point_obj;
     }
+
+    // JUST FOR OVERHEAD< Kind of a hard computation to get
+    float max_links_for_full_clusters = 1000;
+    float max_links_for_point_clusters = 1000;
+    float max_both=1000;
+
+    if(full_clusters_per_ppu) {
+      max_links_for_full_clusters = (ppu.num_full_clusters()+ppu.num_point_clusters()/
+                                     ppu._coef_per_cluster)/(float)full_clusters_per_ppu;
+    }
+    if(point_clusters_per_ppu) {
+      max_links_for_point_clusters = (ppu.num_point_clusters()+ppu.num_full_clusters())
+                                     /(float)point_clusters_per_ppu;
+    }
+    float max_links_pre_clutter=std::min(max_links_for_full_clusters,max_links_for_point_clusters);
+    float max_coef_pre_clutter=std::min(max_links_pre_clutter*full_clusters_per_ppu*ppu._coef_per_cluster +
+                               max_links_pre_clutter*point_clusters_per_ppu *
+                               extra_obj_ratio_for_fast, ov.reason[DatapathOverheads::FAST_OBJ]);
+
+    ov.reason[DatapathOverheads::POINT_FULL_RATIO] = max_coef_pre_clutter;
+
+
+
+    float coef_pre_clutter = full_clusters_per_ppu * ppu._coef_per_cluster +
+                             point_clusters_per_ppu;
+
     if(clutter) {
       full_clusters_per_ppu  += full_obj * clusters_per_full_object; 
       full_clusters_per_ppu  += point_obj;  // not a typo, we use a full cluster for one point obj
     }
+
+    float coef_post_clutter = full_clusters_per_ppu * ppu._coef_per_cluster +
+                             point_clusters_per_ppu;
+
+    //Calculate the number of MACCs/PPU (if you had to count clutter)
+    ov.reason[DatapathOverheads::CLUTTER] = ov.reason[DatapathOverheads::POINT_FULL_RATIO] * 
+                                            coef_pre_clutter / coef_post_clutter;
+
+    if(!is_direct_path && !is_aidp) {
+      //finally, lets reduce the compute intensity by duty cycle
+      full_clusters_per_ppu *= tx_duty_cycle;
+      point_clusters_per_ppu *= tx_duty_cycle;
+    }
+
 
     int input_replication_factor = ceil((float)full_clusters_per_ppu / 
                                         (float)ppu.num_full_clusters())-1;
@@ -431,13 +582,8 @@ class Band {
 
     if(!is_direct_path && !is_aidp) {
       //then we can potentially jam multiple links per PPU
-
-      //first, lets reduce the compute intensity by duty cycle
-      full_clusters_per_ppu *= tx_duty_cycle;
-      point_clusters_per_ppu *= tx_duty_cycle;
-      
       for(; num_links_sharing_ppu < ppu._output_router._in_degree; num_links_sharing_ppu++) {
-        
+       
         int extra_point_clusters_required = 
         map_cluster_resources(full_clusters_per_ppu, point_clusters_per_ppu, ppu,
                               input_replication_factor, num_links_sharing_ppu);
@@ -450,6 +596,14 @@ class Band {
     }
 
     int total_ppus_considered = ppus_in_full_range * input_replication_factor;
+
+
+    float pre_network_links_per_ppu = (float) num_links_sharing_ppu / (float) total_ppus_considered;
+    ov.reason[DatapathOverheads::IMPERFECT_MAP] = 
+      ideal_coef_per_ppu_per_link * pre_network_links_per_ppu;
+
+
+
 
     // We now need to take into account Wafer-level effects for coefficient updates
     // Note the following:
@@ -522,7 +676,13 @@ class Band {
       printf("num_links_sharing_ppu %d, ppus per link %f\n",num_links_sharing_ppu,ppus_per_link);
     }
 
-    return 1.0f/ppus_per_link;
+    float links_per_ppu = 1.0f/ppus_per_link;
+
+    ov.reason[DatapathOverheads::COEF_NETWORK] = 
+      ideal_coef_per_ppu_per_link * links_per_ppu;
+
+
+    return links_per_ppu;
   }
 
   int algorithmic_num_links() {
@@ -774,7 +934,8 @@ class ScenarioGen {
 
         b._n_obj = 100;
 
-        b._avg_frac_full_objects=0.05;
+        b._avg_frac_full_objects=0.04;
+        b._avg_coef_per_object = 40;
 
       } else {
         b._n_fast  = platforms;
@@ -788,11 +949,11 @@ class ScenarioGen {
 
         b._n_obj = 20;
 
-        b._avg_frac_full_objects=0.33; //needs to be higher to meet the link_complexity
+        b._avg_frac_full_objects=0.2; //needs to be higher to meet the link_complexity
+        b._avg_coef_per_object = 60;
       }
 
       b.recalculate_txrx();
-      b._avg_coef_per_object = 60;
 
       b._n_full_range_obj = b._n_fast;
         
