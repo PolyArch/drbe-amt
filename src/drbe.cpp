@@ -628,33 +628,6 @@ int get_best_ppu() {
   return 0;
 }
 
-struct ppu_stat_per_band {
-  float num_ppu = 0.0;
-  float num_ppu_chiplet = 0.0;
-};
-
-struct PPUStats {
-  float avg_coef_per_ppu=0;
-  float avg_coef_per_mm2=0;
-  int total_failures=0;
-  float avg_wafers=0;
-  float avg_links_per_wafer=0;
-  float percent_in_target_wafer=0;
-
-  float avg_links_per_mm2=0;
-
-  // Histogram
-  int wafer_histo[100000];
-  void print_wafer_histo() {
-    for(int i = 1; i < 400; ++i) {
-      printf("%d ",wafer_histo[i]);
-    }
-  }
-
-  // Per Band Statistic
-  ppu_stat_per_band * ppu_stat_vec;
-};
-
 void dump_ge_tradeoff(ofstream & ge_tradeoff, GEStats & ge_stats, std::vector<Band>& scene_vec, WaferStats & w_stats){
   for(int i = 0; i < scene_vec.size(); i++){
     ge_tradeoff << ge_stats.print_ge_tradeoff(scene_vec[i],ge_stats.ge_stat_vec[i], w_stats);
@@ -746,8 +719,8 @@ bool model_succesful(path_proc_unit* ppu, Band& b, drbe_wafer& w, WaferStats & w
 
   int failures=0;
   bool verbose=false;
-
-  float wafer_unconstrained_ppus = b.ppus_per_band(*ppu,w,failures,verbose);
+  PPUStats ppu_stats; //ignored for now
+  float wafer_unconstrained_ppus = b.ppus_per_band(*ppu,w,ppu_stats,verbose);
   float links_per_wafer = b.calc_links_per_wafer(wafer_unconstrained_ppus,ppu,w,w_stats,verbose);
   float num_wafers = b.num_links() / links_per_wafer;
 
@@ -886,7 +859,7 @@ void evaluate_ppu(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer&
   int i = 0; // band index
   for(auto & b : scene_vec) {
 
-    float wafer_unconstrained_ppus = b.ppus_per_band(*ppu,w, ppu_stats.total_failures,verbose);
+    float wafer_unconstrained_ppus = b.ppus_per_band(*ppu,w, ppu_stats,verbose);
     total_ppus += wafer_unconstrained_ppus;
     ppu_stats.ppu_stat_vec[i].num_ppu = wafer_unconstrained_ppus;
     ppu_stats.ppu_stat_vec[i].num_ppu_chiplet = wafer_unconstrained_ppus / (ppu->_ppus_per_chiplet);
@@ -1049,6 +1022,12 @@ path_proc_unit* design_ppu_for_scenarios(std::vector<Band>& scene_vec, drbe_wafe
   return best_ppu;
 }
 
+void print_ppu_overheads(PPUStats& ppu_stats) {
+  for(int i = DatapathOverheads::NUM_ENTRIES-1; i >=0; --i) {
+    printf("%s: %0.1f,", DatapathOverheads::nameof(i+1), 
+        ppu_stats.overhead.reason[i]/ppu_stats.num_scenarios);
+  }
+}
 
 void print_performance_summary(float v, int ppu_area, path_proc_unit* best_ppu, 
                                tech_params& t,
@@ -1061,7 +1040,7 @@ void print_performance_summary(float v, int ppu_area, path_proc_unit* best_ppu,
           "In: %d/%d Agg: %d/%d, Coef: %d/%d, Mem Ratio: %d, "\
           "ppus/die: %d, " \
           "Coef/mm2: %0.2f, links/cm2: %0.2f, "\
-          "avg_waf: %0.2f, links/ppu: %0.2f, links/wafer: %0.0f, per_targ_waf: %0.1f, targ_waf: %d, fail: %d",
+          "avg_waf: %0.2f, links/ppu: %0.2f, links/wafer: %0.0f, per_targ_waf: %0.1f, targ_waf: %d, fail: %d ",
         Band::average_clutter(scene_vec),
         ppu_area, 
         best_ppu->area(), 
@@ -1085,12 +1064,13 @@ void print_performance_summary(float v, int ppu_area, path_proc_unit* best_ppu,
         ppu_stats.percent_in_target_wafer*100,
         num_wafers_target,
         ppu_stats.total_failures);
+    print_ppu_overheads(ppu_stats);
 }
 
 
 void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w, WaferStats & w_stats,
                           bool direct_path, bool aidp, bool easy, 
-                          bool ge_cpu, bool ge_asic, bool ge_cgra, bool ge_hard) {
+                          bool ge_cpu, bool ge_asic, bool ge_cgra, bool ge_hard, bool pre_ge) {
 
     int fixed_platforms = 8;
  
@@ -1121,15 +1101,17 @@ void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w, WaferStats & w_sta
         // Design PPU and evaluate it
         path_proc_unit* new_ppu = design_ppu_for_scenarios(scene_vec,w,w_stats, false);
         evaluate_ppu(new_ppu,scene_vec,w, ppu_stats,w_stats,num_wafers,false /*verbose*/);  
-        
-        // Design GE and evaluate it
-        ge_core* ge = design_ge_core_for_scenario(new_ppu,scene_vec,w,w_stats,ge_stats, ppu_stats, ge_cpu, ge_asic, ge_cgra);
+       
+        if(!pre_ge) { 
+          // Design GE and evaluate it
+          ge_core* ge = design_ge_core_for_scenario(new_ppu,scene_vec,w,w_stats,ge_stats, ppu_stats, ge_cpu, ge_asic, ge_cgra);
 
-        // We need to redesign the PPU since some resources are used by GE
-        new_ppu = design_ppu_for_scenarios(scene_vec,w,w_stats, false);
-        evaluate_ppu(new_ppu,scene_vec,w, ppu_stats,w_stats,num_wafers,false /*verbose*/);  
+          // We need to redesign the PPU since some resources are used by GE
+          new_ppu = design_ppu_for_scenarios(scene_vec,w,w_stats, false);
+          evaluate_ppu(new_ppu,scene_vec,w, ppu_stats,w_stats,num_wafers,false /*verbose*/);  
+        }
         
-        if(ppu_stats.avg_wafers <= num_wafers && w_stats.num_ge_chiplet > 0) {
+        if(ppu_stats.avg_wafers <= num_wafers && (w_stats.num_ge_chiplet > 0 || pre_ge)) {
           //we succeeded, record fixed platforms
           //printf("#wafer = %d, #platform = %d, #ge_chiplet = %d (#gc_chiplet = %d, #gm_chiplet = %d)\n",num_wafers, fixed_platforms, w_stats.num_ge_chiplet, w_stats.num_gc_chiplet, w_stats.num_gm_chiplet);
         } else {
@@ -1369,7 +1351,7 @@ int main(int argc, char* argv[]) {
 
     if(print_wafer_scaling) {
       print_wafer_tradeoff(*best_ppu, w, w_stats, direct_path, aidp, easy_scenario, 
-      ge_cpu, ge_asic, ge_cgra, ge_hard);
+      ge_cpu, ge_asic, ge_cgra, ge_hard, print_pre_ge_summary);
     }
 
 
