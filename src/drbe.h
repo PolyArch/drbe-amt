@@ -1044,10 +1044,10 @@ class ScenarioGen {
       ge_stats.ge_stat_vec[i].antenna_gain.dict_dim = ge_hard ? 800 : 400; //CASE: nominal 400 max 800
       // RCS
       ge_stats.ge_stat_vec[i].rcs.order = ge_hard ? 6 : 4; //CASE: nominal 4 max 6
-      ge_stats.ge_stat_vec[i].rcs.points = ge_hard ? 10 : 20; //CASE: nominal 20 max 10
+      ge_stats.ge_stat_vec[i].rcs.points = ge_hard ? 2 : 1; //CASE: nominal 1 max 2???
       ge_stats.ge_stat_vec[i].rcs.plates = 1;
       ge_stats.ge_stat_vec[i].rcs.pntAngle = 1;
-      ge_stats.ge_stat_vec[i].rcs.angle = 2;
+      ge_stats.ge_stat_vec[i].rcs.angle = 4;
       ge_stats.ge_stat_vec[i].rcs.freq = 1;
       ge_stats.ge_stat_vec[i].rcs.plzn = ge_hard ? 4 : 1; //CASE: nominal 1 max 4
       i++;
