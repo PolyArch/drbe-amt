@@ -40,7 +40,7 @@ public:
 
 private:
   float _area_multiplier=1.0;
-  float _fp_macc_per_mm2=400; //?
+  float _fp_macc_per_mm2=175*4; //?
   float _int_macc_per_mm2=700*4;
   float _sram_Mb_per_mm2=8.1f;
   float _ppu_clock_rate = 1e9;// Clock of the PPU is 1 GHz
