@@ -518,7 +518,10 @@ void rcs_cmbl(ge_stat_per_band & fed_cmbl){
   // Order 6
   else if (fed_cmbl.rcs.order == 6){
         C = 0.1; //Dummy
-        M = OB*(360/fed_cmbl.rcs.angle)*(180/fed_cmbl.rcs.angle)*(360/fed_cmbl.rcs.angle)*(180/fed_cmbl.rcs.angle)*fed_cmbl.rcs.freq*fed_cmbl.rcs.plzn*fed_cmbl.rcs.points*2;
+        M = OB * 
+              (360/fed_cmbl.rcs.angle)*(180/fed_cmbl.rcs.angle)*
+              (360/fed_cmbl.rcs.angle)*(180/fed_cmbl.rcs.angle)*
+              fed_cmbl.rcs.freq*fed_cmbl.rcs.plzn*fed_cmbl.rcs.points*2;
         B = (PT/TU)*fed_cmbl.rcs.points*2;
         L = 20;
   }
@@ -690,7 +693,7 @@ int get_num_supported_scenario(
         // memory and compute resource need satisfied
         bool can_support_this =
         /* PPU */ 
-            ppu_stats.ppu_stat_vec[band_idx].num_ppu <= num_ppu_chiplet
+            ppu_stats.ppu_stat_vec[band_idx].num_ppu_chiplet <= num_ppu_chiplet
         /* GE Compute */ 
         &&  ge_stats.ge_stat_vec[band_idx].coordinate_trans.compute / compute_density_per_sec <= ge.coord_trans_compute_area
         &&  ge_stats.ge_stat_vec[band_idx].nr_engine.compute / compute_density_per_sec <= ge.nr_engine_compute_area
@@ -748,7 +751,7 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
       int num_support_scenario = 0;
       for(auto & b : scene_vec){
         // Get the PPU area required by this scenario
-        float current_band_ppu_chiplet = ppu_stats.ppu_stat_vec[band_idx].num_ppu;
+        float current_band_ppu_chiplet = ppu_stats.ppu_stat_vec[band_idx].num_ppu_chiplet;
         // Get the geometry compute area required by this scenario
         float current_band_gc_area = ge_stats.ge_stat_vec[band_idx].compute_area;
         // Get the geometry memory area required by this scenario
@@ -780,6 +783,8 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
 
   w_stats.num_ge_chiplet = most_scenario_ge_chiplet;
   w_stats.num_ppu_chiplet = total_chiplets - most_scenario_ge_chiplet;
+  printf("Total #chiplet is %f, most scenario GE #chiplet is %d\n", total_chiplets, most_scenario_ge_chiplet);
+
   w_stats.num_gc_chiplet = most_scenario_gc_chiplet;
   w_stats.num_gm_chiplet = most_scenario_gm_chiplet;
   /*
@@ -1025,7 +1030,6 @@ void evaluate_ppu(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer&
 
     float wafer_unconstrained_ppus = b.ppus_per_band(*ppu,w, ppu_stats,verbose);
     total_ppus += wafer_unconstrained_ppus;
-    ppu_stats.ppu_stat_vec[i].num_ppu = wafer_unconstrained_ppus;
     ppu_stats.ppu_stat_vec[i].num_ppu_chiplet = wafer_unconstrained_ppus / (ppu->_ppus_per_chiplet);
 
     float links_per_wafer = b.calc_links_per_wafer(wafer_unconstrained_ppus,ppu,w,w_stats,verbose);
@@ -1041,7 +1045,7 @@ void evaluate_ppu(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer&
 
     total_coef += b._n_obj * b._avg_coef_per_object * b.algorithmic_num_links();
     total_links += b.algorithmic_num_links();
-    w_stats.num_ppu_chiplet = wafer_constrained_ppus / ppu->_ppus_per_chiplet; 
+    ppu_stats.ppu_stat_vec[i].num_ppu_chiplet = wafer_constrained_ppus / ppu->_ppus_per_chiplet; 
     //printf("after count the chiplet from PPU, there are %d chiplets\n", b.num_ppu_chiplet);
 
 
