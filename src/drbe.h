@@ -1065,7 +1065,7 @@ class ScenarioGen {
   static int max_coef_per_link() {return 200;}
 
   static int min_links() {return 6400;}
-  static int max_links() {return 80000;}
+  static int max_links() {return 800000;}
 
   static int min_objects() {return 10;} //threshold (obj/link)
   static int max_objects() {return 100;} //objective

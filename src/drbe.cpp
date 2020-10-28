@@ -821,6 +821,7 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
   // Get the total amount of chiplet per wafer
   float total_chiplets = w.num_units() * w_stats.num_wafer;
   int most_num_scenario_supported = 0;
+  int most_num_interactions_supported = 0;
   int most_scenario_ge_chiplet = 0;
   int most_scenario_gc_chiplet = 0;
   int most_scenario_gm_chiplet = 0;
@@ -839,6 +840,7 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
       // Loop over all scenarios
       int band_idx = 0;
       int num_support_scenario = 0;
+      int num_support_interactions = 0;
       for(auto & b : scene_vec){
         // Get the PPU area required by this scenario
         float current_band_ppu_chiplet = ppu_stats.ppu_stat_vec[band_idx].num_ppu_chiplet;
@@ -854,13 +856,15 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
         if(current_band_gm_area <= gm_area && /* Geometry Memory Area Satisfied*/
           current_band_ppu_chiplet <= ppu_chiplet/* PPU Chiplets count Satisfied*/){
             if(current_band_gc_area <= gc_area){
+              num_support_interactions += b.num_links();
               num_support_scenario++;
             }
         }
         band_idx ++;
       }// End of All scenarios
-      if(num_support_scenario > most_num_scenario_supported){
-        most_num_scenario_supported = num_support_scenario;
+      // Optimize for #interactions
+      if(num_support_interactions > most_num_interactions_supported){
+        most_num_interactions_supported = num_support_interactions;
         most_scenario_ge_chiplet = ge_chiplet;
         most_scenario_gc_chiplet = gc_chiplet;
         most_scenario_gm_chiplet = gm_chiplet;
@@ -927,8 +931,7 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
         // cpu_cgra: 0 = cpu, 1 = cgra
         evaluate_ge(scene_vec, ge_stats, w, cpu_cgra == 0);
         // First initialize the most scenario #chiplet
-        most_num_scenario_supported = 0;
-        most_scenario_ge_chiplet = 0;
+        most_num_interactions_supported = 0;
         most_scenario_gc_chiplet = 0;
         most_scenario_gm_chiplet = 0;
         // Find: GC chiplet vs. GM chiplet
@@ -939,7 +942,7 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
           float gm_area = gm_chiplet * 20;// calculate the geometry memory area
           // Loop over all scenarios
           int band_idx = 0;
-          int num_support_scenario = 0;
+          int num_interaction_supported = 0;
           for(auto & b : scene_vec){
             // Get the PPU area required by this scenario
             float current_band_ppu_chiplet = ppu_stats.ppu_stat_vec[band_idx].num_ppu_chiplet;
@@ -947,22 +950,15 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
             float current_band_gc_area = ge_stats.ge_stat_vec[band_idx].compute_area;
             // Get the geometry memory area required by this scenario
             float current_band_gm_area = ge_stats.ge_stat_vec[band_idx].mem_area;
-            // debug
-            //printf("Band[%d] needs %f compute area and %f memory area\n", band_idx, current_band_gc_area, current_band_gm_area);
-            //return ge;
-            //printf("The memory of RCS is %f\n (Unit is 64-bit) ",  ge_stats.ge_stat_vec[band_idx].rcs.memory);
-            // We first check whether the memory and ppu requirements are met
-            if(current_band_gm_area <= gm_area && /* Geometry Memory Area Satisfied*/
-              current_band_ppu_chiplet <= ppu_chiplet/* PPU Chiplets count Satisfied*/){
-                if(current_band_gc_area <= gc_area){
-                  num_support_scenario++;
-                }
+            // Check if the GC/GM meet requirement
+            if(current_band_gm_area <= gm_area && current_band_gc_area <= gc_area){
+              num_interaction_supported += b.num_links();
             }
             band_idx ++;
           }// End of All scenarios
-          if(num_support_scenario > most_num_scenario_supported){
-            most_num_scenario_supported = num_support_scenario;
-            most_scenario_ge_chiplet = ge_chiplet;
+          // Optimized for #interaction
+          if(num_interaction_supported > most_num_interactions_supported){
+            most_num_interactions_supported = num_interaction_supported;
             most_scenario_gc_chiplet = gc_chiplet;
             most_scenario_gm_chiplet = gm_chiplet;
           }
