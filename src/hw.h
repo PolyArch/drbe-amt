@@ -277,7 +277,7 @@ public:
   }
 
   int fifo_bitwidth () {
-    return ((float)_num_clusters / (float)_mem_banks) * EXTRA_MEM_BW;
+    return std::max(8,(int)(((float)_num_clusters / (float)_mem_banks) * EXTRA_MEM_BW));
   }
 
   router _coef_router;
