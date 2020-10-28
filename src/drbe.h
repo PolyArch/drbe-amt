@@ -911,7 +911,7 @@ class ScenarioGen {
 
   public:
   static void gen_scenarios(std::vector<Band>& scene_vec, bool direct_path, bool aidp,
-      int num_scenarios, int fixed_platforms=0, bool hard_ratio=true) {
+      int num_scenarios, int fixed_platforms=0, int easy_scenario=0) {
 
     if(num_scenarios<=1) {
       Band b;
@@ -921,7 +921,7 @@ class ScenarioGen {
       }
 
       // Number of platforms of each type
-      if(hard_ratio) {
+      if(easy_scenario==0) { // Hard hard case
         b._n_fast  = platforms;
         b._n_slow  = platforms - b._n_fast;
         b._n_fixed = 0;
@@ -936,8 +936,22 @@ class ScenarioGen {
         b._avg_frac_full_objects=0.04;
         b._avg_coef_per_object = 40;
 
-      } else {
+      } else if (easy_scenario==1) { // easy case
         b._n_fast  = platforms;
+        b._n_slow  = platforms - b._n_fast;
+        b._n_fixed = 0;
+
+        b._high_update_period = 5000; //5us
+        b._range=max_range();
+
+        b._n_bands = 1;
+
+        b._n_obj = 20;
+
+        b._avg_frac_full_objects=0.2; //needs to be higher to meet the link_complexity
+        b._avg_coef_per_object = 60;
+      } else {
+        b._n_fast  = 0;
         b._n_slow  = platforms - b._n_fast;
         b._n_fixed = 0;
 

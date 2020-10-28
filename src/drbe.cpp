@@ -25,6 +25,7 @@ static struct option long_options[] = {
     {"num-scenarios",        required_argument, nullptr, 'n',},
     {"target-wafers",        required_argument, nullptr, 't',},
     {"easy-scenario",        no_argument,       nullptr, 'e',},
+    {"very-easy-scenario",        no_argument,  nullptr, 'z',},
     {"verbose",              no_argument,       nullptr, 'v',},
     {"verbose-ge-info",      no_argument,       nullptr, 'g',},
     {"wafer-io",             no_argument,       nullptr, 'w',},
@@ -1366,6 +1367,7 @@ void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w, WaferStats & w_sta
                           bool direct_path, bool aidp, bool easy, 
                           bool ge_cpu, bool ge_asic, bool ge_cgra, bool ge_hard, bool pre_ge, bool compare_ge) {
 
+
     int fixed_platforms = 8;
  
     static const int MAX_WAFERS=21;
@@ -1385,7 +1387,7 @@ void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w, WaferStats & w_sta
       
         std::vector<Band> scene_vec;
         ScenarioGen::gen_scenarios(scene_vec, direct_path, aidp,1/*num_scene=1*/, 
-                                   fixed_platforms, !easy);
+                                   fixed_platforms, easy);
         PPUStats ppu_stats;
         ppu_stats.ppu_stat_vec = new ppu_stat_per_band[scene_vec.size()];
         GEStats ge_stats;
@@ -1440,7 +1442,7 @@ int main(int argc, char* argv[]) {
   int num_scenarios=1000;
   bool limit_wafer_io=true; //DEFAULT IS TRUE
   int chiplet_io_layer=4;
-  bool easy_scenario=false;
+  int easy_scenario=0; //false
 
   bool print_pareto = false;
   bool print_wafer_scaling = false;
@@ -1468,7 +1470,7 @@ int main(int argc, char* argv[]) {
   float pulsed_duty_cycle = 0.5f;
 
   int opt;
-  while ((opt = getopt_long(argc, argv, "vgkdprcn:wl:f:et:", long_options, nullptr)) != -1) {
+  while ((opt = getopt_long(argc, argv, "vgkdprcn:wl:f:ezt:", long_options, nullptr)) != -1) {
     switch (opt) {
       case 'd': direct_path=true; break;
       case 'c': challenge_scenario=true; break;
@@ -1478,7 +1480,8 @@ int main(int argc, char* argv[]) {
       case 'g': verbose_ge_info = true; break;
       case 'n': num_scenarios = atoi(optarg); break;
       case 'w': limit_wafer_io = false; break;
-      case 'e': easy_scenario = true; break;
+      case 'e': easy_scenario = 1; break;
+      case 'z': easy_scenario = 2; break;
       case 'l': chiplet_io_layer = atoi(optarg); break;
       case 't': num_wafers_target = atoi(optarg); break;
       case 'f': dump_file_name = optarg; break;
@@ -1542,7 +1545,7 @@ int main(int argc, char* argv[]) {
   // Generate Scenarios
   // Note that "easy_scenario" is ignored unless num_scenarios == 1
   ScenarioGen::gen_scenarios(scene_vec, direct_path, aidp,
-                             num_scenarios, 0, !easy_scenario);
+                             num_scenarios, 0, easy_scenario);
 
   for(auto& b : scene_vec) {
     b._pulsed_duty_cycle = pulsed_duty_cycle;
