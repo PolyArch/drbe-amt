@@ -240,6 +240,8 @@ class Band {
  
   float calc_links_per_wafer(float wafer_unconstrained_ppus, path_proc_unit* ppu, drbe_wafer& w, WaferStats & w_stats, bool verbose = false) {
 
+    if(w_stats.num_wafer==0) w_stats.num_wafer=1; //FIXME not sure why this is zero, --tony
+
     //We're goint to just cut the biggest square we can out, and assume that's what we'll
     //use all over.
     float GE_chiplets_per_wafer = w_stats.num_ge_chiplet / w_stats.num_wafer;
@@ -281,8 +283,8 @@ class Band {
     float frac_txrx_fixed_or_slow  = (frac_slow+frac_fixed)*(frac_slow+frac_fixed) - frac_txrx_fixed;
     float frac_txrx_fast = max(0.0f,1 - frac_txrx_fixed_or_slow - frac_txrx_fixed);
     float total = frac_txrx_fixed + frac_txrx_fixed_or_slow + frac_txrx_fast;
-    assert(total > 0.99f && total < 1.01f);
 
+    assert(total > 0.99f && total < 1.01f);
 
     float frac_speed_vec[3] ={frac_txrx_fixed,frac_txrx_fixed_or_slow,frac_txrx_fast};
     float total_ppus=0;
@@ -510,7 +512,6 @@ class Band {
     // JUST FOR OVERHEAD< Kind of a hard computation to get
     float max_links_for_full_clusters = 1000;
     float max_links_for_point_clusters = 1000;
-    float max_both=1000;
 
     if(full_clusters_per_ppu) {
       max_links_for_full_clusters = (ppu.num_full_clusters()+ppu.num_point_clusters()/
@@ -609,13 +610,9 @@ class Band {
     // Fast moving objects get charged the high-update rate (others, the slow). 
     // Dynamically, we only need to send updates for actual coefficients.
 
-    float avg_coef_per_object = _avg_coef_per_object * _avg_frac_full_objects +
-                                1 * (1-_avg_frac_full_objects);
-
     float metadata_size = 32;  //metatdata bits per coef
     float coef_size = 32; //bits per coefficient
     float doppler_coef_size = 32; //bits per coefficient
-    float update_bits_per_coef = coef_size + metadata_size / avg_coef_per_object;
     //coef_bandwith in bit/cyc
 
     // If Either the source or destination is a fast object, then
@@ -653,12 +650,14 @@ class Band {
     avg_coef_bw += total_coef_bits_per_ppu * frac_slow / _low_update_period;
     avg_coef_bw += total_coef_bits_per_ppu * frac_fast / _high_update_period;
 
+
     // with the above coef bandwidth, and the max input bandwidth, compute the maximum
     // depth we can send coefficients without losing bandwidth
     float max_ppu_coef_depth = ppu._coef_router._in_degree * ppu._coef_router._bitwidth / 
                                 avg_coef_bw;
 
-    float fraction_ppus_active_due_to_coeff = min(max_ppu_coef_depth/wafer.half_depth(),1.0f);   
+
+    float fraction_ppus_active_due_to_coeff = 1; //min(max_ppu_coef_depth/wafer.half_depth(),1.0f);   
 
     if(verbose) {
       printf("Half Depth %d, max_ppu_coef_depth %f, frac_active: %f\n", 
@@ -709,12 +708,18 @@ class Band {
   }
 
 
+  float frac_max_links();
+  float frac_max_link_complexity();
+
   float link_complexity() {
     float avg_coef_per_link = (_avg_coef_per_object * _avg_frac_full_objects +
-                               1.0f              * (1 - _avg_frac_full_objects)) * _n_obj;
+                               1.0f            * (1 - _avg_frac_full_objects)) * _n_obj;
     return avg_coef_per_link;
   }
 
+  float frac_full_range() {
+    return _n_full_range_obj / (float)_n_obj;
+  }
 
   int platforms() {
     return _n_slow + _n_fast + _n_fixed;
@@ -730,13 +735,14 @@ class Band {
 
   //TODO UPDATE THIS
   bool could_be_harder_than(Band& other) {
-    if(platforms() > other.platforms()) return true;
+    //if(platforms() > other.platforms()) return true;
     //if(reflectors() > other.reflectors()) return true;
     //if(_n_bands < other._n_bands) return true;
-    if(num_links() > other.num_links()) return true;
-    if(_avg_frac_full_objects > other._avg_frac_full_objects) return true; 
-    if(_avg_coef_per_object > other._avg_coef_per_object) return true;
+    if(_n_obj > other._n_obj) return true; 
+    if(frac_max_links() > other.frac_max_links()) return true;
+    if(frac_max_link_complexity() > other.frac_max_link_complexity()) return true;
     if(frac_fast() > other.frac_fast()) return true;
+    if(frac_full_range() > other.frac_full_range()) return true; 
     if(_frac_clutter > other._frac_clutter) return true;
     if(_range > other._range) return true;
     return false;
@@ -762,6 +768,26 @@ class Band {
       _n_rx = ceil((float) platforms() / _n_bands) * 2; 
   }
 
+  void print_detailed() {
+    printf("      ");
+    if(_is_direct_path) {
+      printf("dp:");
+    } else if(_is_aidp) {
+      printf("aidp (kp:%d/%d)", _k_rcs_points, _coef_per_rcs_point);
+    } else {
+      printf("tdl:");
+    }
+
+    printf("tx %d, rx %d, obj %d, bands %d, slow %d, fast %d, fixed %d;"\
+           "full_range %d, coef_per_obj %d, frac_full %f, range %d"\
+           "frac_clutter %f, frac_pulsed %f, pulsed_duty %f, \
+           update_low %f, update_high %f",
+           _n_tx, _n_rx, _n_obj, _n_bands, _n_slow, _n_fast, _n_fixed, 
+           _n_full_range_obj, _avg_coef_per_object, _avg_frac_full_objects, _range,
+           _frac_clutter, _frac_pulsed, _pulsed_duty_cycle,
+           _low_update_period, _high_update_period);
+  }
+
 
   bool _is_direct_path=false;
   bool _is_aidp=false;
@@ -776,7 +802,6 @@ class Band {
  
 
   //Objects by speed
-  int _n_platform=0;
   int _n_slow=0;
   int _n_fast=0;
   int _n_fixed=0; 
@@ -790,7 +815,7 @@ class Band {
   float _frac_pulsed = 0.0; // out of 1
   float _pulsed_duty_cycle = 0.5; //out of 1
   float _low_update_period=1000000; //
-  float _high_update_period=10000; //clock cycles?
+  float _high_update_period=5000; //clock cycles?
 
   std::vector<float> _norm_features;
 
@@ -936,6 +961,8 @@ class ScenarioGen {
         b._avg_frac_full_objects=0.04;
         b._avg_coef_per_object = 40;
 
+        b._n_full_range_obj = b._n_fast;
+
       } else if (easy_scenario==1) { // easy case
         b._n_fast  = platforms;
         b._n_slow  = platforms - b._n_fast;
@@ -950,6 +977,9 @@ class ScenarioGen {
 
         b._avg_frac_full_objects=0.2; //needs to be higher to meet the link_complexity
         b._avg_coef_per_object = 60;
+
+        b._n_full_range_obj = b._n_fast;
+
       } else {
         b._n_fast  = 0;
         b._n_slow  = platforms - b._n_fast;
@@ -964,11 +994,11 @@ class ScenarioGen {
 
         b._avg_frac_full_objects=0.2; //needs to be higher to meet the link_complexity
         b._avg_coef_per_object = 60;
+
+        b._n_full_range_obj = 0;
       }
 
       b.recalculate_txrx();
-
-      b._n_full_range_obj = b._n_fast;
         
       b._is_direct_path=direct_path;
       b._is_aidp=aidp;
@@ -1002,15 +1032,16 @@ class ScenarioGen {
 
       b._n_obj = rand_rng(min_objects(),max_objects());
 
-      b._avg_coef_per_object = (rand_rng(min_coef_per_obj(),max_coef_per_obj()) / 10) * 10;
-      b._avg_frac_full_objects=rand_rng(min_full_obj()*1000,max_full_obj()*1000)/1000.0;
+      b._n_full_range_obj = rand_rng(0,b._n_obj); //just random is fine
 
-      b._n_full_range_obj = b._n_fast;
+      b._avg_coef_per_object = 40; //(rand_rng(min_coef_per_obj(),max_coef_per_obj()) / 10) * 10;
+      b._avg_frac_full_objects=rand_rng(min_full_obj()*50,max_full_obj()*50)/50.0;
+
       b._range = (rand_rng(min_range(),max_range())/10)*10;
       
-      b._high_update_period = rand_rng(5000 /*5us*/,100000 /*100us*/);
+      b._high_update_period = 5000; //rand_rng(5000 /*5us*/,100000 /*100us*/);
 
-      b._frac_clutter = rand_rng(min_clutter()*1000,max_clutter()*1000)/1000.0f;
+      b._frac_clutter = rand_rng(min_clutter()*100,max_clutter()*100)/100.0f;
 
   /*
       printf("Stationary obj: %d, Slow Obj: %d, Fast Obj: %d, bands %d,  \
@@ -1030,7 +1061,9 @@ class ScenarioGen {
     if(b.num_links() < min_links() || b.num_links() > max_links()) return false;
 
 //    if(b.link_complexity() < min_coef_per_link()) return false;
-    if(b.link_complexity() > overprov_link_complexity()) {
+
+    //The extra 60 is so that the pareto exploration will not stop short
+    if(b.link_complexity() > (overprov_link_complexity() + 20)) {
       return false;
     }
     return true;
@@ -1090,7 +1123,7 @@ class ScenarioGen {
   static int min_coef_per_obj() {return  20;}
   static int max_coef_per_obj() {return 100;}
 
-  static int min_range() {return 50;} // in km
+  static int min_range() {return 200;} // in km
   static int max_range() {return 500;}
 
   static float min_clutter() {return 0;}

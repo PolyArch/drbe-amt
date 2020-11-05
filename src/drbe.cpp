@@ -64,7 +64,7 @@ float Band::normalized_distance_to(Band &other) {
 
 int Band::increase_difficulty(int kind=-1) {
 
-  int max_types=9;
+  int max_types=10;
   int which = rand_bt(0,max_types);
 
   if(kind!=-1) {
@@ -74,37 +74,42 @@ int Band::increase_difficulty(int kind=-1) {
 
   assert(num_links() <= ScenarioGen::max_links());
 
+  //cout << "start\n";
   for(int i = 0; i < max_types; ++i,which=(which+1)%max_types) {
+    //cout << "which:" << which <<"\n";
     switch(which) {
       case 0: { //add a fixed platform
-        if(platforms() + 1 >ScenarioGen::max_platforms()) break;
-        _n_fixed+=1; //one object per band
+        //if(platforms() + 1 >ScenarioGen::max_platforms()) break;
+        int change_amount = rand_bt(1,5);
+        _n_fixed+=change_amount; //one object per band
         recalculate_txrx();
 
         if(ScenarioGen::scenario_is_between_threshold_and_objective(*this)) {
           return which+1;
         } else {
-          _n_fixed -=1;
+          _n_fixed -= change_amount;
           recalculate_txrx();
         } 
 
       }
       case 1: { //upgrade a fixed platform to slow platform
-        if(_n_fixed - 1 < 0) break;
-        _n_fixed -= 1;
-        _n_slow += 1;
+        if(_n_fixed == 0) break;
+        int change_amount = std::min(_n_fixed,20);
+        _n_fixed -= change_amount;
+        _n_slow  += change_amount;
         recalculate_txrx();
         return which+1;
       }
       case 2: { //upgrade a slow platform to fast platform
-        if(_n_slow - 1 < 0) break;
-        _n_slow -= 1;
-        _n_fast += 1;
+        if(_n_slow == 0) break;
+        int change_amount = std::min(_n_slow,20);
+        _n_slow -= change_amount;
+        _n_fast += change_amount;
         recalculate_txrx();
         return which+1;
       }
       case 3: { //subtract a band
-        if(_n_bands==1 || rand_bt(0,20)!=0) break; //rand check to make it less likely
+        if(_n_bands==1 || rand_bt(0,2)!=0) break; //rand check to make it less likely
 
         _n_bands--;
         recalculate_txrx();
@@ -126,16 +131,24 @@ int Band::increase_difficulty(int kind=-1) {
         } 
       }
       case 5: { //range
-        if(_range + 10 > ScenarioGen::max_range()) break;
-        _range+=10;
+        if(_range + 1 > ScenarioGen::max_range()) break;
+        _range+=1;
         return which+1;
       }
       case 6: { // more objects
         if(_n_obj + 1 > ScenarioGen::max_objects()) break;
         _n_obj += 1;
+
+        //Remove full objects until we're within the thresh/objective
+        while(!ScenarioGen::scenario_is_between_threshold_and_objective(*this) &&
+               _avg_frac_full_objects>0.001) {
+          _avg_frac_full_objects -= 0.001;
+        }
+
         if(ScenarioGen::scenario_is_between_threshold_and_objective(*this)) {
           return which+1;
         } else {
+          //Failed to add a new object b/c link complexity is too high
           _n_obj -=1;
         } 
       }
@@ -145,45 +158,70 @@ int Band::increase_difficulty(int kind=-1) {
         return which+1;
       }
       case 8: { // more link complexity
-        _avg_frac_full_objects += 0.001;
+        _avg_frac_full_objects += 0.02;
         if(ScenarioGen::scenario_is_between_threshold_and_objective(*this)) {
           return which+1;
         } else {
-          _avg_frac_full_objects -= 0.001;
+          _avg_frac_full_objects -= 0.02;
         } 
+        assert(num_links() <= ScenarioGen::max_links());
       }
-      assert(num_links() <= ScenarioGen::max_links());
+      case 9: { //increase the number of full range objects
+        if(_n_full_range_obj < _n_obj) {
+          _n_full_range_obj += 1;
+          return which+1;
+        }
+      }
     }
   }
   return false;
 }
 
+float Band::frac_max_links() {
+  float val = algorithmic_num_links() / (float)ScenarioGen::max_links();
+  float rounded_val = ceil(val*100)/100.0f;
+  return rounded_val;
+}
+float Band::frac_max_link_complexity() {
+  float val = link_complexity() / (float)ScenarioGen::overprov_link_complexity();
+  float rounded_val = ceil(val*100)/100.0f;
+  return std::min(1.0f,rounded_val);
+}
+
 void Band::print_norm_csv() {
   static bool printed = false;
   if(!printed) {
-    printf("Links, Tap/Link, Fast, %%Clutter, Range\n");
+    printf("%-8s %-8s %-8s %-8s %-8s %-8s %-8s \n", 
+           "Links",   "Objects",   "Tap/Link",   
+           "Fast", "RngOvrProv", "%%Clutter", "Range");
     printed=true;
   }
 
-  printf("%0.3f, %0.3f, %0.3f, %0.3f, %0.3f", 
-    num_links() / (float)ScenarioGen::max_links(),
-    link_complexity() / (float)ScenarioGen::overprov_link_complexity(),
+  printf("%7.3f, %7.3f, %7.3f, %7.3f, %7.3f, %7.3f, %7.3f", 
+    frac_max_links(),
+    _n_obj/(float)ScenarioGen::max_objects(),
+    frac_max_link_complexity(),
     _n_fast / (float)platforms(),
+    frac_full_range(),
     _frac_clutter / (float)ScenarioGen::max_clutter(),
     _range / (float)ScenarioGen::max_range()
   );
+//  printf("%d %d ", _n_obj, _n_full_range_obj);
 }
 
 void Band::print_csv() {
-  printf("%3d, %0.3f, %0.3f, %0.3f, %3d", 
-    num_links(),link_complexity(),_n_fast/(float)ScenarioGen::max_platforms(),_frac_clutter, _range);
+  printf("%3d, %d, %0.3f, %0.3f, %0.3f, %0.3f, %3d", 
+    num_links(),_n_obj,link_complexity(),_n_fast/(float)ScenarioGen::max_platforms(),
+    frac_full_range(),_frac_clutter, _range);
 }
 
 std::vector<float>& Band::normalized_vec() {
   if(_norm_features.size()==0) {
-    _norm_features.push_back(num_links() / (float)ScenarioGen::max_links());
-    _norm_features.push_back(link_complexity() / (float)ScenarioGen::overprov_link_complexity());
+    _norm_features.push_back(frac_max_links());
+    _norm_features.push_back(_n_obj/(float)ScenarioGen::max_objects());
+    _norm_features.push_back(frac_max_link_complexity());
     _norm_features.push_back(_n_fast / (float)platforms());
+    _norm_features.push_back(frac_full_range());
     _norm_features.push_back(_frac_clutter / (float)ScenarioGen::max_clutter());
     _norm_features.push_back(_range / (float)ScenarioGen::max_range());
   }
@@ -633,7 +671,7 @@ int get_best_ppu() {
 }
 
 void dump_ge_tradeoff(ofstream & ge_tradeoff, GEStats & ge_stats, std::vector<Band>& scene_vec, WaferStats & w_stats){
-  for(int i = 0; i < scene_vec.size(); i++){
+  for(unsigned i = 0; i < scene_vec.size(); i++){
     ge_tradeoff << ge_stats.print_ge_tradeoff(scene_vec[i],ge_stats.ge_stat_vec[i], w_stats);
   }
 }
@@ -748,9 +786,8 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
       float gc_area = gc_chiplet * 20;// calculate the geometry compute area
       float gm_area = gm_chiplet * 20;// calculate the geometry memory area
       // Loop over all scenarios
-      int band_idx = 0;
       int num_support_scenario = 0;
-      for(auto & b : scene_vec){
+      for(unsigned band_idx = 0; band_idx < scene_vec.size(); ++band_idx) {
         // Get the PPU area required by this scenario
         float current_band_ppu_chiplet = ppu_stats.ppu_stat_vec[band_idx].num_ppu_chiplet;
         // Get the geometry compute area required by this scenario
@@ -768,7 +805,6 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
               num_support_scenario++;
             }
         }
-        band_idx ++;
       }// End of All scenarios
       if(num_support_scenario > most_num_scenario_supported){
         most_num_scenario_supported = num_support_scenario;
@@ -779,8 +815,8 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
     }// End of loop over from 0% of GM to 100% of GM (100% GC to 0% GC)
   }// End of loop over from 0% of GE to 100 % of GE
   // debug
-  printf("%d out of %d scenarios (%.2f %) are support by CGRA/CPU design\n", 
-    most_num_scenario_supported, scene_vec.size(), 100 * (float)most_num_scenario_supported / (float)scene_vec.size() );
+  printf("%d out of %d scenarios (%.2f) are support by CGRA/CPU design\n", 
+    most_num_scenario_supported, (int)scene_vec.size(), 100 * (float)most_num_scenario_supported / (float)scene_vec.size() );
 
   w_stats.num_ge_chiplet = most_scenario_ge_chiplet;
   w_stats.num_ppu_chiplet = total_chiplets - most_scenario_ge_chiplet;
@@ -818,8 +854,7 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
     float all_scenario_rcs_memory_area = 0.0;
     float all_scenario_tu_memory_area = 0.0;
     // Start gathering the statistics
-    int band_idx = 0;
-    for(auto & b : scene_vec){
+    for(unsigned band_idx=0; band_idx < scene_vec.size(); ++band_idx) {
       // Overall statistic
       all_scenario_memory_area += ge_stats.ge_stat_vec[band_idx].mem_area;
       all_scenario_compute_area += ge_stats.ge_stat_vec[band_idx].compute_area;
@@ -839,10 +874,9 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
       all_scenario_path_gain_memory_area += ge_stats.ge_stat_vec[band_idx].path_velocity.memory / mem_density;
       all_scenario_rcs_memory_area += ge_stats.ge_stat_vec[band_idx].rcs.memory / mem_density;
       all_scenario_tu_memory_area += ge_stats.ge_stat_vec[band_idx].tu.memory / mem_density;
-      band_idx ++;
     }
-    float average_memory_area = all_scenario_memory_area / (float) band_idx;
-    float average_compute_area = all_scenario_compute_area / (float) band_idx;
+    float average_memory_area = all_scenario_memory_area / (float) scene_vec.size();
+    float average_compute_area = all_scenario_compute_area / (float) scene_vec.size();
     float average_total_area = average_memory_area + average_compute_area;
     // Calculate the initial number of GC/GM chiplet
     int num_asic_gc_chiplet = ceil((float)num_asic_ge_chiplet * 
@@ -872,8 +906,8 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
     */
     int initial_num_supported = get_num_supported_scenario(*ge, w, scene_vec.size(),w_stats.num_ppu_chiplet , ge_stats, ppu_stats);
     print_ge_breakdown(*ge);
-    printf("%d out of %d scenarios (%.2f %) are supportted by ASIC design\n", 
-    initial_num_supported, scene_vec.size(), 100 * (float)initial_num_supported / (float)scene_vec.size() );
+    printf("%d out of %d scenarios (%.2f) are supportted by ASIC design\n", 
+    initial_num_supported, (int)scene_vec.size(), 100 * (float)initial_num_supported / (float)scene_vec.size() );
 
   }
 
@@ -885,7 +919,7 @@ ge_core * design_ge_core_for_scenario(path_proc_unit * ppu, std::vector<Band>& s
   return ge;
 }
 
-bool model_succesful(path_proc_unit* ppu, Band& b, drbe_wafer& w, WaferStats & w_stats, int max_wafers) {
+bool model_successful(path_proc_unit* ppu, Band& b, drbe_wafer& w, WaferStats & w_stats, int max_wafers) {
 
   int failures=0;
   bool verbose=false;
@@ -894,8 +928,17 @@ bool model_succesful(path_proc_unit* ppu, Band& b, drbe_wafer& w, WaferStats & w
   float links_per_wafer = b.calc_links_per_wafer(wafer_unconstrained_ppus,ppu,w,w_stats,verbose);
   float num_wafers = b.num_links() / links_per_wafer;
 
-  if(failures!=0) return false; // don't include this scenario if failed
+  if(failures) {
+    printf("model mapping failures: %d\n", failures);
+    assert(0);
+  }
 
+  //if(failures!=0) return false; // don't include this scenario if failed
+
+  //if(num_wafers > max_wafers ){
+  //  printf("model unsuccessful, no_io_ppus: %f, links_per_wafer: %f, num_wafers %f\n",
+  //      wafer_unconstrained_ppus, links_per_wafer, num_wafers);
+  //} 
   return ceil(num_wafers) <= max_wafers;
 }
 
@@ -906,7 +949,7 @@ std::vector<Band> top_k_pareto_scenarios(path_proc_unit* ppu, std::vector<Band>&
   top_k_scenarios.resize(2);
 
   for(auto& band : scene_vec) {
-    bool success = model_succesful(ppu,band,w,w_stats,max_wafers);
+    bool success = model_successful(ppu,band,w,w_stats,max_wafers);
     if(!success) continue;
 
     // Make sure we are harder than any currently successful band
@@ -931,18 +974,22 @@ std::vector<Band> top_k_pareto_scenarios(path_proc_unit* ppu, std::vector<Band>&
 
     int num_tries=0;
 
-    cout << "BEFORE\n";
-    hardest_possible_band.print_csv();
-    cout << "\n";
+    //cout << "BEFORE\n";
+    //hardest_possible_band.print_csv();
+    //cout << "\n";
 
-    while(could_increase && num_tries < 20) {
+    while(could_increase && num_tries < 50) {
       try_band=hardest_possible_band;
-      
-      if(int which = try_band.increase_difficulty()) {
-        cout << "increased" << which -1 << "\n";
-        if(model_succesful(ppu,try_band,w, w_stats, max_wafers)) {
+     
+      assert(model_successful(ppu,try_band,w, w_stats, max_wafers));
+
+      if( /*int which = */try_band.increase_difficulty()) {
+        //cout << "increased" << which -1 << "\n";
+        if(model_successful(ppu,try_band,w, w_stats, max_wafers)) {
           hardest_possible_band=try_band;
+          num_tries=0;
         } else {
+          //cout << "could not increase " << which-1 <<"\n";
           num_tries++;
         }
       } else {
@@ -950,10 +997,9 @@ std::vector<Band> top_k_pareto_scenarios(path_proc_unit* ppu, std::vector<Band>&
       }
     }
 
-    cout << "AFTER\n";
-    hardest_possible_band.print_csv();
-    cout << "\n";
-
+    //cout << "AFTER\n";
+    //hardest_possible_band.print_csv();
+    //cout << "\n";
 
     //while we do everything, check and see if we found a higher # platforms
     if(top_k_scenarios[0].num_links() < hardest_possible_band.num_links()) {
@@ -1010,6 +1056,20 @@ std::vector<Band> top_k_pareto_scenarios(path_proc_unit* ppu, std::vector<Band>&
     band.print_norm_csv();
     printf("\n");
   }
+  for(auto& band : top_k_scenarios) {
+    band.print_csv();
+    printf("\n");
+  }
+
+  for(auto& band : top_k_scenarios) {
+    band.print_detailed();
+    PPUStats ppu_stats;
+
+    int ppus = band.ppus_per_band(*ppu,w,ppu_stats,false);
+
+    printf(" PPUs: %d \n",ppus);
+  }
+
   printf("num succ: %d \n", (int)successful_pareto_bands.size());
 
 
@@ -1304,6 +1364,17 @@ void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w, WaferStats & w_sta
    printf("\n");
 }
 
+void print_graph(std::vector<float> x, std::vector<float> y) {
+  for(float v : x) {
+    cout << v << " ";
+  }
+  cout << "\n";
+  for(float v : y) {
+    cout << v << " ";
+  }
+  cout << "\n";
+}
+
 int main(int argc, char* argv[]) {
   bool verbose = false;
   bool direct_path = false;
@@ -1378,7 +1449,8 @@ int main(int argc, char* argv[]) {
     }
   }
   // We use same easy/hard for ppu and GE
-  
+ 
+  printf("Num Scenarios: %d\n", num_scenarios); 
 
   if(limit_wafer_io==false) {
     cout << "WARNING: Unlimited Wafer IO.  (this only pertains to sensitivity analysis)\n";
@@ -1493,6 +1565,7 @@ int main(int argc, char* argv[]) {
     w.set_chiplet_io_layer(chiplet_io_layer);
 
     // Initialize the recording statistic structure
+    // Sihao -- you are leaking memory everywhere -- FIXME : )
     PPUStats ppu_stats;
     ppu_stats.ppu_stat_vec = new ppu_stat_per_band[num_scenarios];
     GEStats ge_stats;
@@ -1510,13 +1583,90 @@ int main(int argc, char* argv[]) {
 
     evaluate_ppu(best_ppu,scene_vec,w, ppu_stats,w_stats,num_wafers_target,verbose /*verbose*/);
 
-    if(print_pareto) {
-      top_k_pareto_scenarios(best_ppu,scene_vec,w,w_stats, 6,num_wafers_target);
-    }
-
     if(print_pre_ge_summary) {
       print_performance_summary(v, ppu_area, best_ppu, t, scene_vec, ppu_stats, num_wafers_target);
       printf("\n");
+    }
+
+    if(print_pareto) {
+      std::vector<Band> pband = 
+        top_k_pareto_scenarios(best_ppu,scene_vec,w,w_stats, 6,num_wafers_target);
+
+       cout << "\nNum Obj\n";
+      for(Band band : pband) {
+        std::vector<float> x;
+        std::vector<float> y;
+        for(int i = 50; i <= 150; i+=5) {
+          std::vector<Band> tband;
+          tband.push_back(band);
+          tband[0]._n_obj=i * tband[0]._n_obj/100;
+          evaluate_ppu(best_ppu,tband,w, ppu_stats,w_stats,num_wafers_target,verbose /*verbose*/);
+          x.push_back(i);
+          y.push_back(ppu_stats.avg_wafers);
+        }
+        print_graph(x,y);
+      }
+      
+      cout << "\nLink Complexity\n";
+      for(Band band : pband) {
+        std::vector<float> x;
+        std::vector<float> y;
+        for(int i = 0; i <= 20; i+=1) {
+          std::vector<Band> tband;
+          tband.push_back(band);
+          tband[0]._avg_frac_full_objects=i/100.0;
+          if(tband[0]._avg_frac_full_objects<0){
+            continue;
+          }
+
+          evaluate_ppu(best_ppu,tband,w, ppu_stats,w_stats,num_wafers_target,verbose /*verbose*/);
+          x.push_back(tband[0].link_complexity());
+          y.push_back(ppu_stats.avg_wafers);
+        }
+        print_graph(x,y);
+      }
+
+      cout << "\nRange Overprov\n";
+      for(Band band : pband) {
+        std::vector<float> x;
+        std::vector<float> y;
+        for(int i = 0; i <= 100; i+=5) {
+          std::vector<Band> tband;
+          tband.push_back(band);
+          tband[0]._n_full_range_obj= i/100.0 * tband[0]._n_obj;
+          if(tband[0]._n_full_range_obj<0 || tband[0]._n_full_range_obj>tband[0]._n_obj){
+            continue;
+          }
+
+          evaluate_ppu(best_ppu,tband,w, ppu_stats,w_stats,num_wafers_target,verbose /*verbose*/);
+          x.push_back(i);
+          y.push_back(ppu_stats.avg_wafers);
+        }
+        print_graph(x,y);
+      }
+
+      cout << "\nRange\n";
+      for(Band band : pband) {
+        std::vector<float> x;
+        std::vector<float> y;
+        for(int i = 200; i <= 500; i+=20) {
+          std::vector<Band> tband;
+          tband.push_back(band);
+          tband[0]._range=i;
+          if(tband[0]._range<200 || tband[0]._range > 500){
+            continue;
+          }
+
+          evaluate_ppu(best_ppu,tband,w, ppu_stats,w_stats,num_wafers_target,verbose /*verbose*/);
+          x.push_back(i);
+          y.push_back(ppu_stats.avg_wafers);
+        }
+        print_graph(x,y);
+      }
+   
+  
+
+
     }
 
     if(print_wafer_scaling) {

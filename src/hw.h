@@ -119,10 +119,11 @@ class coef_storage : public hw_unit {
   path_proc_unit* ppu;
 };
 
-
-
 class path_proc_unit : public hw_unit {
 public:
+  virtual ~path_proc_unit() {
+  }
+
   path_proc_unit(tech_params* t) : hw_unit(t), 
      _coef_router(t), _input_router(t), _output_router(t),
       _coef_storage(t,this), _input_tap_fifo(t,this), _dist_network(t,this)   {
