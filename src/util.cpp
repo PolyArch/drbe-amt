@@ -13,6 +13,24 @@ int rand_rng(int s, int e) {
   return rand_bt(s,e);
 }
 
+void print_ge_compare(float records[200][7]){
+  std::ofstream compare;
+  compare.open("ge-compare.csv");
+  // print header
+  compare << "PPU-limit, CPU-GE-limit, CGRA-GE-limit, ASIC-GE-limit, "
+          << "PPU-CPU-GE-limit, PPU-CGRA-GE-limit, PPU-ASIC-GE-limit\n";
+  for(int row = 0; row < 200; row ++){
+    for(int col = 0; col < 7; col ++){
+      compare << records[row][col];
+      if(col == 6){
+        compare << "\n";
+      }else{
+        compare << ", ";
+      }
+    }
+  }
+}
+
 std::ofstream print_ge_tradeoff(std::string filename){
     std::ofstream ge_tradeoff;
     ge_tradeoff.open(filename);
