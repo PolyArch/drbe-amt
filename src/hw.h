@@ -326,10 +326,14 @@ public:
   int half_depth() {
     return ceil(depth()/2);
   }
+
+  void set_num_units(int n) {
+    _num_units=n;
+  }
   int num_units() {
     if(_num_units==0) {
       //_num_units = area()/_chiplet_area;
-     _num_units=2025;
+     _num_units=ceil(2025 * 20.0 / _chiplet_area);
      // printf("num units: %d\n",_num_units);
     }
     return _num_units;

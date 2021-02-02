@@ -15,6 +15,7 @@
 #include <tuple>
 
 #define LINK_COMPLEXITY_OVERPROV (1.25f)
+#define OBJ_SIZE_GRAN (20)
 
 struct WaferStats {
   // Wafer level
@@ -768,6 +769,34 @@ class Band {
       _n_rx = ceil((float) platforms() / _n_bands) * 2; 
   }
 
+  static void print_detailed_header() {
+    printf("model, #tx, #rx, #obj, #bands, slow_obj, fast_obj, fixed_obj,"\
+           "range_ovrprov_obj, coef_per_obj, %%full_extent_obj, range(km),"\
+           "%%clutter_obj, %%pulsed, pulsed_duty, \
+           update_period_slow, update_period_fast");
+  }
+
+  void print_detailed_body() {
+    printf("      ");
+    if(_is_direct_path) {
+      printf("dp, ");
+    } else if(_is_aidp) {
+      printf("aidp (kp:%d/%d),", _k_rcs_points, _coef_per_rcs_point);
+    } else {
+      printf("tdl,");
+    }
+
+    printf("%d, %d, %d, %d, %d, %d, %d,"\
+           "%d, %d, %f, %d,"\
+           "%f, %f, %f,"\
+           "%f, %f",
+           _n_tx, _n_rx, _n_obj, _n_bands, _n_slow, _n_fast, _n_fixed, 
+           _n_full_range_obj, _avg_coef_per_object, _avg_frac_full_objects, _range,
+           _frac_clutter, _frac_pulsed, _pulsed_duty_cycle,
+           _low_update_period, _high_update_period);
+  }
+
+
   void print_detailed() {
     printf("      ");
     if(_is_direct_path) {
@@ -1030,11 +1059,12 @@ class ScenarioGen {
 
       b.recalculate_txrx();
 
-      b._n_obj = rand_rng(min_objects(),max_objects());
+      b._n_obj = rand_rng(min_objects(),max_objects())/2*2;
 
       b._n_full_range_obj = rand_rng(0,b._n_obj); //just random is fine
 
-      b._avg_coef_per_object = 40; //(rand_rng(min_coef_per_obj(),max_coef_per_obj()) / 10) * 10;
+      b._avg_coef_per_object = (rand_rng(min_coef_per_obj(),max_coef_per_obj()) 
+                                                                / OBJ_SIZE_GRAN) * OBJ_SIZE_GRAN;
       b._avg_frac_full_objects=rand_rng(min_full_obj()*50,max_full_obj()*50)/50.0;
 
       b._range = (rand_rng(min_range(),max_range())/10)*10;
@@ -1063,7 +1093,7 @@ class ScenarioGen {
 //    if(b.link_complexity() < min_coef_per_link()) return false;
 
     //The extra 60 is so that the pareto exploration will not stop short
-    if(b.link_complexity() > (overprov_link_complexity() + 20)) {
+    if(b.link_complexity() > (overprov_link_complexity() + 4)) {
       return false;
     }
     return true;
@@ -1120,10 +1150,10 @@ class ScenarioGen {
   static int min_bands() {return 1;}
   static int max_bands() {return 4;}
 
-  static int min_coef_per_obj() {return  20;}
-  static int max_coef_per_obj() {return 100;}
+  static int min_coef_per_obj() {return 20;}
+  static int max_coef_per_obj() {return 60;}
 
-  static int min_range() {return 200;} // in km
+  static int min_range() {return 500;} // in km
   static int max_range() {return 500;}
 
   static float min_clutter() {return 0;}

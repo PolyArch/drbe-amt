@@ -10,6 +10,9 @@ enum flags {
   SENSITIVITY_WAFER_IO,
   SENSITIVITY_TX_SPARSITY,
   PARAM_PULSED_TX_DUTY,
+  PARAM_DIELET_AREA,
+  PARAM_TECH_SCALING,
+  PARAM_DIELETS_PER_WAFER,
   GE_CPU,
   GE_ASIC,
   GE_CGRA,
@@ -23,17 +26,23 @@ static struct option long_options[] = {
     {"challenge-scenario",   no_argument,       nullptr, 'c',},
     {"num-scenarios",        required_argument, nullptr, 'n',},
     {"target-wafers",        required_argument, nullptr, 't',},
+    {"final-target-wafers",  required_argument, nullptr, 'u',},
     {"easy-scenario",        no_argument,       nullptr, 'e',},
-    {"very-easy-scenario",        no_argument,  nullptr, 'z',},
+    {"very-easy-scenario",   no_argument,       nullptr, 'z',},
     {"verbose",              no_argument,       nullptr, 'v',},
     {"verbose-ge-info",      no_argument,       nullptr, 'g',},
     {"wafer-io",             no_argument,       nullptr, 'w',},
     {"layer",                required_argument, nullptr, 'l',},
     {"dump-file-name",       required_argument, nullptr, 'f',},
 
+
     {"pre-ge-summary",       no_argument,       nullptr, 'p',},
 
     {"pulsed-duty-cycle",    required_argument, nullptr, PARAM_PULSED_TX_DUTY},
+
+    {"dielet-area",          required_argument, nullptr, PARAM_DIELET_AREA},
+    {"tech-scale",           required_argument, nullptr, PARAM_TECH_SCALING},
+    {"dielets-per-wafer",    required_argument, nullptr, PARAM_DIELETS_PER_WAFER},
 
     {"ge-cpu",               no_argument,       nullptr, GE_CPU},
     {"ge-asic",              no_argument,       nullptr, GE_ASIC},
@@ -122,8 +131,9 @@ int Band::increase_difficulty(int kind=-1) {
         } 
       }
       case 4: { //avg_coef_per_obj
-        if(_avg_coef_per_object +1 > ScenarioGen::max_coef_per_obj()) break;
-        _avg_coef_per_object+=1;
+        break;
+        if(_avg_coef_per_object + OBJ_SIZE_GRAN > ScenarioGen::max_coef_per_obj()) break;
+        _avg_coef_per_object+=OBJ_SIZE_GRAN;
         if(ScenarioGen::scenario_is_between_threshold_and_objective(*this)) {
           return which+1;
         } else {
@@ -138,6 +148,7 @@ int Band::increase_difficulty(int kind=-1) {
       case 6: { // more objects
         if(_n_obj + 1 > ScenarioGen::max_objects()) break;
         _n_obj += 1;
+        _n_full_range_obj += 1;
 
         //Remove full objects until we're within the thresh/objective
         while(!ScenarioGen::scenario_is_between_threshold_and_objective(*this) &&
@@ -150,6 +161,7 @@ int Band::increase_difficulty(int kind=-1) {
         } else {
           //Failed to add a new object b/c link complexity is too high
           _n_obj -=1;
+          _n_full_range_obj -= 1;
         } 
       }
       case 7: { // more clutter
@@ -942,9 +954,37 @@ bool model_successful(path_proc_unit* ppu, Band& b, drbe_wafer& w, WaferStats & 
   return ceil(num_wafers) <= max_wafers;
 }
 
-std::vector<Band> top_k_pareto_scenarios(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer& w, WaferStats & w_stats, int k, int max_wafers) {
+void make_harder(Band& band, path_proc_unit* ppu, drbe_wafer& w, 
+                 WaferStats& w_stats, int max_wafers) {
+  Band try_band;
+  int num_tries=0;
+  bool could_increase=true;
+
+  while(could_increase && num_tries < 50) {
+    try_band=band;
+   
+    assert(model_successful(ppu,try_band,w, w_stats, max_wafers));
+
+    if( /*int which = */try_band.increase_difficulty()) {
+      //cout << "increased" << which -1 << "\n";
+      if(model_successful(ppu,try_band,w, w_stats, max_wafers)) {
+        band=try_band;
+        num_tries=0;
+      } else {
+        //cout << "could not increase " << which-1 <<"\n";
+        num_tries++;
+      }
+    } else {
+      could_increase=false;
+    }
+  }
+}
+
+std::vector<Band> top_k_pareto_scenarios(path_proc_unit* ppu, std::vector<Band>& scene_vec, drbe_wafer& w, WaferStats & w_stats, int k, int max_wafers, int final_max_wafers) {
   std::vector<Band> top_k_scenarios;
   std::vector<Band> successful_pareto_bands;
+
+  std::vector<vector<Band>> top_k_scenarios_per_max_wafers;
 
   top_k_scenarios.resize(2);
 
@@ -968,34 +1008,13 @@ std::vector<Band> top_k_pareto_scenarios(path_proc_unit* ppu, std::vector<Band>&
     if(found_categorically_harder_band) continue;
 
     // Now lets increase the difficulty as much as possible:
-    bool could_increase=true;
-    Band try_band;
     Band hardest_possible_band=band;
-
-    int num_tries=0;
 
     //cout << "BEFORE\n";
     //hardest_possible_band.print_csv();
     //cout << "\n";
 
-    while(could_increase && num_tries < 50) {
-      try_band=hardest_possible_band;
-     
-      assert(model_successful(ppu,try_band,w, w_stats, max_wafers));
-
-      if( /*int which = */try_band.increase_difficulty()) {
-        //cout << "increased" << which -1 << "\n";
-        if(model_successful(ppu,try_band,w, w_stats, max_wafers)) {
-          hardest_possible_band=try_band;
-          num_tries=0;
-        } else {
-          //cout << "could not increase " << which-1 <<"\n";
-          num_tries++;
-        }
-      } else {
-        could_increase=false;
-      }
-    }
+    make_harder(hardest_possible_band,ppu,w,w_stats,max_wafers);
 
     //cout << "AFTER\n";
     //hardest_possible_band.print_csv();
@@ -1051,7 +1070,6 @@ std::vector<Band> top_k_pareto_scenarios(path_proc_unit* ppu, std::vector<Band>&
     top_k_scenarios.push_back(chosen_band);
   }
 
-
   for(auto& band : top_k_scenarios) {
     band.print_norm_csv();
     printf("\n");
@@ -1071,6 +1089,46 @@ std::vector<Band> top_k_pareto_scenarios(path_proc_unit* ppu, std::vector<Band>&
   }
 
   printf("num succ: %d \n", (int)successful_pareto_bands.size());
+
+
+  // ----------------------------------------------------------------
+  // Now we go nuts and try to improve each scenario
+  top_k_scenarios_per_max_wafers.push_back(top_k_scenarios);
+
+  for(int w_iter=1; w_iter < final_max_wafers-max_wafers; ++w_iter) {
+    //Copy the scenarios from the previous iteration
+    top_k_scenarios_per_max_wafers.push_back(top_k_scenarios_per_max_wafers[w_iter-1]);
+
+    //Now make each one as hard as possible with the new number of wafers
+    int cur_max_wafers = w_iter + max_wafers;
+    for(int scene_ind = 0; scene_ind < k; ++scene_ind) {
+      make_harder(top_k_scenarios_per_max_wafers[w_iter][scene_ind],
+                  ppu,w,w_stats,cur_max_wafers);
+    }
+  }
+  
+  for(int scene_ind = 0; scene_ind < k; ++scene_ind) {
+    printf("Scene %d\n",scene_ind+1);
+    for(int w_iter=0; w_iter < top_k_scenarios_per_max_wafers.size(); ++w_iter) {
+
+      top_k_scenarios_per_max_wafers[w_iter][scene_ind].print_norm_csv();
+      printf("\n");
+    }
+  }
+
+  printf("num_wafers,");
+  Band::print_detailed_header();
+  printf("\n");
+
+  for(int scene_ind = 0; scene_ind < k; ++scene_ind) {
+    printf("Scene %d\n",scene_ind+1);
+    for(int w_iter=0; w_iter < top_k_scenarios_per_max_wafers.size(); ++w_iter) {
+      printf("%d,",w_iter+max_wafers);
+      top_k_scenarios_per_max_wafers[w_iter][scene_ind].print_detailed_body();
+      printf("\n");
+    }
+  }
+
 
 
   return top_k_scenarios;
@@ -1258,20 +1316,20 @@ void print_ppu_overheads(PPUStats& ppu_stats) {
   }
 }
 
-void print_performance_summary(float v, int ppu_area, path_proc_unit* best_ppu, 
+void print_performance_summary(float v, int dielet_area, path_proc_unit* best_ppu, 
                                tech_params& t,
                                std::vector<Band>& scene_vec, PPUStats& ppu_stats,
                                int num_wafers_target) {
     printf("v: %0.3f, ", v);
     
     printf("avg_clut: %f, "\
-          "%dmm^2 PPU (%0.2f), in-MB: %0.2f, clust: %d, flex_clust: %d, coef/clust %d, "\
+          "%dmm^2 die (%0.2f), in-MB: %0.2f, clust: %d, flex_clust: %d, coef/clust %d, "\
           "In: %d/%d Agg: %d/%d, Coef: %d/%d, Mem Ratio: %d, "\
           "ppus/die: %d, " \
           "Coef/mm2: %0.2f, links/cm2: %0.2f, "\
           "avg_waf: %0.2f, links/ppu: %0.2f, links/wafer: %0.0f, per_targ_waf: %0.1f, targ_waf: %d, fail: %d ",
         Band::average_clutter(scene_vec),
-        ppu_area, 
+        dielet_area, 
         best_ppu->area(), 
         best_ppu->input_buf_area()*t.sram_Mb_per_mm2()/8,
         best_ppu->_num_clusters, 
@@ -1393,6 +1451,7 @@ int main(int argc, char* argv[]) {
   bool print_pareto_after_ge = false;
 
   int num_wafers_target=1;
+  int final_wafers_target=1;
 
   string dump_file_name="";
   tech_params t;
@@ -1411,6 +1470,12 @@ int main(int argc, char* argv[]) {
 
   float pulsed_duty_cycle = 0.5f;
 
+  float dielet_area = 20; //mm^2
+  float tech_scale=1;
+
+  
+  int dielets_per_wafer = -1; //units
+
   int opt;
   while ((opt = getopt_long(argc, argv, "vgkdprcn:wl:f:ezt:", long_options, nullptr)) != -1) {
     switch (opt) {
@@ -1426,10 +1491,15 @@ int main(int argc, char* argv[]) {
       case 'z': easy_scenario = 2; break;
       case 'l': chiplet_io_layer = atoi(optarg); break;
       case 't': num_wafers_target = atoi(optarg); break;
+      case 'u': final_wafers_target = atoi(optarg); break;
       case 'f': dump_file_name = optarg; break;
       case 'p': print_pre_ge_summary = true; break;
 
       case PARAM_PULSED_TX_DUTY: pulsed_duty_cycle = atof(optarg); break;
+
+      case PARAM_DIELET_AREA: dielet_area = atof(optarg); break;
+      case PARAM_TECH_SCALING: tech_scale = atof(optarg); break;
+      case PARAM_DIELETS_PER_WAFER: dielets_per_wafer = atoi(optarg); break;
 
       case GE_CPU: {ge_cpu = true;ge_asic = false; ge_cgra = false; break;}
       case GE_ASIC: {ge_cpu = false;ge_asic = true; ge_cgra = false; break;}
@@ -1483,6 +1553,9 @@ int main(int argc, char* argv[]) {
   if(ge_cgra) printf("Assuming GE CGRA model\n");
   if(ge_hard) printf("GE Hard Case\n"); else printf("GE Easy Case\n");
 
+
+  t.set_area_multiplier(tech_scale);
+
   std::vector<Band> scene_vec;
   // Generate Scenarios
   // Note that "easy_scenario" is ignored unless num_scenarios == 1
@@ -1502,9 +1575,12 @@ int main(int argc, char* argv[]) {
   // You can run different experiments by uncommenting different loops here ... we should make this
   // more configurable in the future. : )
 
-  //for(int ppu_area = 20; ppu_area < 21; ppu_area+=5) {
-  int ppu_area=20;
-  drbe_wafer w(&t,300,(float)ppu_area);
+  drbe_wafer w(&t,300,(float)dielet_area);
+
+  if(dielets_per_wafer!=-1) {
+    w.set_num_units(dielets_per_wafer);
+  }
+
   //float fast_update_period=10000;
 
   //for(fast_update_period = 1000; fast_update_period < 1000000; 
@@ -1584,28 +1660,32 @@ int main(int argc, char* argv[]) {
     evaluate_ppu(best_ppu,scene_vec,w, ppu_stats,w_stats,num_wafers_target,verbose /*verbose*/);
 
     if(print_pre_ge_summary) {
-      print_performance_summary(v, ppu_area, best_ppu, t, scene_vec, ppu_stats, num_wafers_target);
+      print_performance_summary(v, dielet_area, best_ppu, t, scene_vec, ppu_stats, num_wafers_target);
       printf("\n");
     }
 
     if(print_pareto) {
-      std::vector<Band> pband = 
-        top_k_pareto_scenarios(best_ppu,scene_vec,w,w_stats, 6,num_wafers_target);
-
-       cout << "\nNum Obj\n";
-      for(Band band : pband) {
-        std::vector<float> x;
-        std::vector<float> y;
-        for(int i = 50; i <= 150; i+=5) {
-          std::vector<Band> tband;
-          tband.push_back(band);
-          tband[0]._n_obj=i * tband[0]._n_obj/100;
-          evaluate_ppu(best_ppu,tband,w, ppu_stats,w_stats,num_wafers_target,verbose /*verbose*/);
-          x.push_back(i);
-          y.push_back(ppu_stats.avg_wafers);
-        }
-        print_graph(x,y);
+      if(final_wafers_target < num_wafers_target) {
+        final_wafers_target = num_wafers_target;  //just the one
       }
+
+      std::vector<Band> pband = 
+        top_k_pareto_scenarios(best_ppu,scene_vec,w,w_stats, 6,num_wafers_target,final_wafers_target);
+
+      // cout << "\nNum Obj\n";
+      //for(Band band : pband) {
+      //  std::vector<float> x;
+      //  std::vector<float> y;
+      //  for(int i = 50; i <= 150; i+=5) {
+      //    std::vector<Band> tband;
+      //    tband.push_back(band);
+      //    tband[0]._n_obj=i * tband[0]._n_obj/100;
+      //    evaluate_ppu(best_ppu,tband,w, ppu_stats,w_stats,num_wafers_target,verbose /*verbose*/);
+      //    x.push_back(i);
+      //    y.push_back(ppu_stats.avg_wafers);
+      //  }
+      //  print_graph(x,y);
+      //}
       
       cout << "\nLink Complexity\n";
       for(Band band : pband) {
@@ -1663,9 +1743,6 @@ int main(int argc, char* argv[]) {
         }
         print_graph(x,y);
       }
-   
-  
-
 
     }
 
@@ -1679,7 +1756,11 @@ int main(int argc, char* argv[]) {
       best_ppu->print_params();
       best_ppu->print_area_breakdown();
 
-      printf("wafer_sram_MB: %0.2f, wafer_macc: %0.2f E-MACC/s, wafer_SRAM_bw:%0.2f EB/s\n", 
+
+      printf("%d,%d,%d,%d\n",w.num_units(), best_ppu->_ppus_per_chiplet,
+          (best_ppu->num_full_clusters()*best_ppu->_coef_per_cluster +
+          best_ppu->num_point_clusters()), SCALAR_MACC_PER_COMPLEX_MACC);
+      printf("wafer_sram_MB: %0.2f, wafer_macc: %0.2f P-MACC/s, wafer_SRAM_bw:%0.2f PB/s\n", 
           w.num_units() * best_ppu->_ppus_per_chiplet *
            (best_ppu->input_buf_area() + best_ppu->_input_tap_fifo.area() 
                  + best_ppu->_coef_storage.area())*t.sram_Mb_per_mm2()/8,
@@ -1708,14 +1789,14 @@ int main(int argc, char* argv[]) {
     evaluate_ppu(best_ppu,scene_vec,w, ppu_stats,w_stats,num_wafers_target,verbose /*verbose*/);
 
     if(!print_pre_ge_summary) {
-      print_performance_summary(v, ppu_area, best_ppu, t, scene_vec, ppu_stats, num_wafers_target);
+      print_performance_summary(v, dielet_area, best_ppu, t, scene_vec, ppu_stats, num_wafers_target);
       printf(", #wafer = %d, #ge_chiplet = %d (#gc_chiplet = %d, #gm_chiplet = %d), #ppu_chiplet = %d\n", 
               w_stats.num_wafer, w_stats.num_ge_chiplet, w_stats.num_gc_chiplet, w_stats.num_gm_chiplet,
               w_stats.num_ppu_chiplet);
     }
 
     if(print_pareto_after_ge) {
-      top_k_pareto_scenarios(best_ppu,scene_vec,w,w_stats, 6,num_wafers_target);
+      top_k_pareto_scenarios(best_ppu,scene_vec,w,w_stats, 6,num_wafers_target,final_wafers_target);
     }
 
   }
