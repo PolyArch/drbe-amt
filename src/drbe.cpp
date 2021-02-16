@@ -1526,6 +1526,7 @@ void print_wafer_tradeoff(path_proc_unit& ppu, drbe_wafer& w, WaferStats & w_sta
           // We need to redesign the PPU since some resources are used by GE
           new_ppu = design_ppu_for_scenarios(scene_vec,w,w_stats, false);
           evaluate_ppu(new_ppu,scene_vec,w, ppu_stats,w_stats,num_wafers,false /*verbose*/);  
+          delete ge;
         }
         
         if(ppu_stats.avg_wafers <= num_wafers && (w_stats.num_ge_chiplet > 0 || pre_ge)) {
@@ -1773,7 +1774,6 @@ int main(int argc, char* argv[]) {
     w.set_chiplet_io_layer(chiplet_io_layer);
 
     // Initialize the recording statistic structure
-    // Sihao -- you are leaking memory everywhere -- FIXME : )
     PPUStats ppu_stats;
     ppu_stats.ppu_stat_vec = new ppu_stat_per_band[num_scenarios];
     GEStats ge_stats;
@@ -1931,8 +1931,12 @@ int main(int argc, char* argv[]) {
       top_k_pareto_scenarios(best_ppu,scene_vec,w,w_stats, 6,num_wafers_target,final_wafers_target);
     }
 
+    delete [] ppu_stats.ppu_stat_vec;
+    delete [] ge_stats.ge_stat_vec;
+    delete ge;
   }
   if(dump_file_name != "") ge_tradeoff.close();
+  
 
   return 0;
 }
